@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}导入 · 书签库{% endblock %}
+
+{% block content %}
+<header class="topbar">
+  <div class="topbar-title"><h1>批量导入</h1></div>
+</header>
+
+<p class="hint">
+  支持四种输入：<b>纯文本域名清单</b>（每行一个域名）、
+  <b>CSV/TSV</b>（可指定域名列与分类列）、
+  <b>浏览器导出的书签 HTML</b>（目录层级自动变成分类树）、
+  <b>Markdown 链接列表</b>。直接粘贴或拖文件进来都行。
+</p>
+
+<div class="panel">
+  <div class="drop" id="drop">
+    <textarea id="import-text" rows="10" placeholder="每行一个域名，例如：&#10;github.com&#10;news.ycombinator.com&#10;https://example.com/path&#10;&#10;也可以把 .txt / .csv / .html 文件拖进来"></textarea>
+    <div class="drop-foot">
+      <label class="btn sm">
+        选择文件<input type="file" id="import-file" accept=".txt,.csv,.tsv,.html,.htm,.md,.list" hidden>
+      </label>
+      <span class="muted" id="file-name"></span>
+      <button class="btn sm" id="btn-clear">清空</button>
+    </div>
+  </div>
+
+  <div class="opts">
+    <label>导入到分类
+      <select id="opt-category"><option value="">（按文件层级 / 顶部）</option></select>
+    </label>
+    <label class="inline"><input type="checkbox" id="opt-tree" checked> 用文件里的目录层级建分类</label>
+    <label class="inline"><input type="checkbox" id="opt-fetch" checked> 同时抓取标题与图标</label>
+    <label class="inline"><input type="checkbox" id="opt-skip" checked> 跳过已存在的网址</label>
+    <label class="grow">公共标签
+      <input type="text" id="opt-tags" placeholder="逗号分隔，如：待读, 工具">
+    </label>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="btn-preview">解析预览</button>
+    <button class="btn primary" id="btn-run" disabled>开始导入</button>
+  </div>
+</div>
+
+<div class="panel" id="preview-panel" hidden>
+  <div class="panel-head">
+    <h2>解析结果</h2>
+    <div class="stat-row" id="preview-stat"></div>
+  </div>
+  <div class="table-wrap short">
+    <table class="table">
+      <thead><tr><th>网址</th><th>标题</th><th>目录 / 分类</th><th>状态</th></tr></thead>
+      <tbody id="preview-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel" id="progress-panel" hidden>
+  <div class="panel-head"><h2>导入进度</h2><span class="muted" id="prog-status"></span></div>
+  <div class="bar"><div class="bar-fill" id="prog-fill" style="width:0%"></div></div>
+  <div class="stat-row" id="prog-stat"></div>
+  <details id="prog-errors" hidden><summary>失败明细</summary><pre id="prog-error-log"></pre></details>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h2>历史任务</h2></div>
+  <div class="table-wrap short">
+    <table class="table">
+      <thead><tr><th>来源</th><th>总数</th><th>成功</th><th>重复</th><th>失败</th><th>状态</th><th>时间</th></tr></thead>
+      <tbody id="jobs-body">
+        {% for j in jobs %}
+        <tr>
+          <td>{{ j.source_name }}</td><td>{{ j.total }}</td><td>{{ j.success }}</td>
+          <td>{{ j.duplicate }}</td><td>{{ j.failed }}</td>
+          <td><span class="badge {{ j.status }}">{{ j.status }}</span></td>
+          <td class="muted">{{ j.created_at.strftime('%m-%d %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

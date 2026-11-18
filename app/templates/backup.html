@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}备份 · 书签库{% endblock %}
+
+{% block content %}
+<header class="topbar">
+  <div class="topbar-title"><h1>备份与导出</h1></div>
+  <div class="topbar-tools">
+    <button class="btn primary" id="btn-backup">立即备份</button>
+  </div>
+</header>
+
+<p class="hint">
+  每个备份包内含四样东西：<b>bookmark.db</b>（原样恢复）、<b>bookmarks.json</b>（跨程序迁移）、
+  <b>bookmarks.html</b>（Netscape 格式，能直接导进浏览器或别的书签程序）、<b>favicons/</b>（图标原文件）。
+  应用每天 {{ 3 }} 点会自动备份一次，保留最近若干份。
+</p>
+
+<div class="panel">
+  <div class="panel-head"><h2>备份包</h2><span class="muted" id="bk-hint"></span></div>
+  <div class="table-wrap short">
+    <table class="table stack">
+      <thead><tr><th>文件名</th><th>大小</th><th>时间</th><th class="col-act">操作</th></tr></thead>
+      <tbody id="backup-body">
+        {% for b in backups %}
+        <tr data-name="{{ b.name }}">
+          <td>{{ b.name }}</td>
+          <td>{{ (b.size / 1024)|round(1) }} KB</td>
+          <td class="muted">{{ b.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="col-act">
+            <a class="btn sm" href="/api/backup/{{ b.name }}/download">下载</a>
+            <button class="btn sm" data-restore="{{ b.name }}">恢复</button>
+            <button class="btn sm danger" data-delete="{{ b.name }}">删除</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not backups %}<div class="empty sm"><p>还没有备份，点右上角「立即备份」。</p></div>{% endif %}
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h2>单格式导出 / 导入</h2></div>
+  <div class="actions wrap">
+    <a class="btn" href="/api/export/html">导出书签 HTML</a>
+    <a class="btn" href="/api/export/json">导出 JSON</a>
+    <label class="btn">导入 JSON<input type="file" id="json-file" accept=".json" hidden></label>
+    <label class="btn">上传备份包<input type="file" id="zip-file" accept=".zip" hidden></label>
+  </div>
+  <p class="muted small">
+    恢复会覆盖当前数据库，操作前系统会把现有库另存一份 <code>pre-restore-*.db</code> 放在备份目录里，恢复错了还能捞回来。
+  </p>
+</div>
+{% endblock %}

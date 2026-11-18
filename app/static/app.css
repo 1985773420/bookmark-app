@@ -1,0 +1,1505 @@
+/* 书签库：石英（Quartz）。
+   设计语言取自 ruixen.com：纯中性色阶打底、单点强调色、发丝描边（半透明 1px）、
+   近乎无阴影的扁平卡片、Geist/Inter 类 grotesk 无衬线、小号大写灰标签。
+   颜色/尺寸/动效都走下面的 token，组件层只引用变量。
+   暗色不是第二个变量块，而是 light-dark() 的第二个参数：切主题只改 color-scheme，
+   每个 token 仍然只有一行，不会出现两处值各自漂移。
+   强调色同理：四套色板是同一批 token 的四个值，切换只改 <html data-accent>。 */
+
+/* 类选择器会盖掉浏览器默认的 [hidden]{display:none}，
+   像 .modal-backdrop{display:grid} 会让空模态框一直显形，所以这里统一兜底。 */
+[hidden] { display: none !important; }
+
+:root {
+  /* 跟随系统；<html data-theme="light|dark"> 把它钉成单值 */
+  color-scheme: light dark;
+
+  /* 中性面：纯灰。亮色从纯白起，暗色从近黑起——没有色偏，强调色才显得干净。
+     描边一律用半透明白/黑，叠在任何底色上都成立，不会出现"灰框浮在白卡上"的发脏感。 */
+  --bg: light-dark(#ffffff, #08080a);
+  /* 暗色下卡片必须比页面底亮一档，否则描边再细也读不出"这是一张卡"。
+     8 → 19（#131317）刚好够分层，又不至于把夜间页面照灰。 */
+  --surface: light-dark(#ffffff, #131317);
+  --surface-2: light-dark(#f6f6f7, #1d1d22);
+  --surface-3: light-dark(#efeff1, #26262c);
+  /* 描边在暗色下抬到 14%：卡片底和页面底只差 7 个色阶，全靠这道线把边界"画"出来 */
+  --border: light-dark(rgba(9, 9, 11, .10), rgba(255, 255, 255, .14));
+  --border-strong: light-dark(rgba(9, 9, 11, .18), rgba(255, 255, 255, .24));
+  --border-soft: light-dark(rgba(9, 9, 11, .06), rgba(255, 255, 255, .08));
+  --fg: light-dark(#09090b, #fafafa);
+  --fg-2: light-dark(#5c5c66, #a6a6b0);
+  --fg-3: light-dark(#82828d, #77777f);
+  /* 状态色：跟强调色无关，四套共用 */
+  --danger: light-dark(#d1242f, #ff6b6b);
+  --ok: light-dark(#12a150, #3ddc84);
+  --warn: light-dark(#a35200, #ffb224);
+
+  /* Ruixen 的卡片几乎不用阴影：靠 1px 描边 + 底色差分层。
+     阴影只留给真正浮起来的层（弹层、菜单、拖拽），而且很浅。 */
+  --shadow-1: 0 1px 2px light-dark(rgba(9, 9, 11, .04), rgba(0, 0, 0, .4));
+  --shadow-2: 0 12px 32px -8px light-dark(rgba(9, 9, 11, .16), rgba(0, 0, 0, .6)),
+              0 2px 8px light-dark(rgba(9, 9, 11, .06), rgba(0, 0, 0, .4));
+  --shadow-lift: 0 10px 28px -10px light-dark(rgba(9, 9, 11, .16), rgba(0, 0, 0, .7)),
+                 0 2px 6px light-dark(rgba(9, 9, 11, .05), rgba(0, 0, 0, .4));
+
+  /* 顶栏/侧栏是半透的，下面内容滚过去时靠模糊分成两层（玻璃）。
+     不透明度给到 90%+：透太多，顶部的品牌光晕会在侧栏底下糊成一条色带。 */
+  --glass: color-mix(in srgb, var(--bg) 92%, transparent);
+  --glass-blur: saturate(1.5) blur(14px);
+
+  /* Geist / Inter 一类 grotesk：字面窄、字重落差大、无衬线。
+     中文回落到苹方/微软雅黑，数字靠 tabular-nums 对齐。 */
+  --font-sans: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+               "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  /* 旧 token 名保留：原先指向宋体，现在整套视觉换成 grotesk，
+     引用 --font-serif 的地方（标题、品牌名、空状态）一起变成无衬线，不用逐个改组件。 */
+  --font-serif: var(--font-sans);
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-sm: 12.5px;
+  --fs-md: 14px;
+  --fs-lg: 20px;
+  --fs-xl: 30px;
+
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+
+  --r-sm: 7px;
+  --r-md: 9px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+
+  /* ---- 动效 ----
+     Ruixen 的动效有弹簧感但幅度很小：多用在按下、图标、徽标，
+     位移动画的位移量压在 2~4px，不做整块飞入。 */
+  --dur-1: 110ms;   /* 按下、勾选：即时反馈 */
+  --dur-2: 170ms;   /* 悬浮、颜色/描边切换 */
+  --dur-3: 240ms;   /* 弹层展开、卡片入场 */
+  --dur-4: 400ms;   /* 页面级、主题切换 */
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --ease-spring: cubic-bezier(.34, 1.4, .64, 1);
+  --ease: var(--ease-out);   /* 旧名，等价于 --ease-out */
+  --dur: var(--dur-2);
+  --stagger: 18ms;           /* 网格入场，每个卡片递延 */
+  --stagger-max: 14;         /* 递延封顶，第 15 个之后一起进场 */
+
+  --side-w: 252px;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+/* ---------- 配色 ----------
+   四套色板 = 同一个 token 名的四个取值。Ruixen 的做法：中性面永远是纯灰，
+   只有强调色饱和（oklch 色相各差 60° 左右），这样切配色像换一支笔，
+   而不是换一套皮肤。每一档都过 WCAG：正文/弱文字 ≥4.5:1、填充 ≥3:1。 */
+
+/* 靛蓝：默认。色值对齐 Ruixen 的 oklch(.55 .25 264) */
+:root, :root[data-accent="indigo"] {
+  --brand: light-dark(#4f46e5, #818cf8);
+  --brand-hover: light-dark(#4338ca, #a5b4fc);
+  --brand-ink: light-dark(#4338ca, #a5b4fc);
+  --brand-fg: light-dark(#ffffff, #0b0b12);
+  --brand-soft: light-dark(#eef2ff, #1e1b4b);
+  --brand-glow: light-dark(rgba(79, 70, 229, .16), rgba(129, 140, 248, .22));
+}
+
+/* 青瓷 */
+:root[data-accent="teal"] {
+  --brand: light-dark(#0d9488, #2dd4bf);
+  --brand-hover: light-dark(#0f766e, #5eead4);
+  --brand-ink: light-dark(#0f766e, #5eead4);
+  --brand-fg: light-dark(#ffffff, #04120f);
+  --brand-soft: light-dark(#ecfdf5, #042f2e);
+  --brand-glow: light-dark(rgba(13, 148, 136, .16), rgba(45, 212, 191, .22));
+}
+
+/* 紫罗兰 */
+:root[data-accent="violet"] {
+  --brand: light-dark(#7c3aed, #a78bfa);
+  --brand-hover: light-dark(#6d28d9, #c4b5fd);
+  --brand-ink: light-dark(#6d28d9, #c4b5fd);
+  --brand-fg: light-dark(#ffffff, #12061f);
+  --brand-soft: light-dark(#f5f3ff, #2e1065);
+  --brand-glow: light-dark(rgba(124, 58, 237, .16), rgba(167, 139, 250, .22));
+}
+
+/* 琥珀：中性面不跟着换色了。Ruixen 的暖色也很克制，
+   只把强调色推暖，底色仍保持纯灰——否则每个组件都要为两种底温各调一次。 */
+:root[data-accent="amber"] {
+  --brand: light-dark(#ea580c, #fb923c);
+  --brand-hover: light-dark(#c2410c, #fdba74);
+  --brand-ink: light-dark(#c2410c, #fdba74);
+  --brand-fg: light-dark(#ffffff, #14060a);
+  --brand-soft: light-dark(#fff7ed, #431407);
+  --brand-glow: light-dark(rgba(234, 88, 12, .16), rgba(251, 146, 60, .22));
+}
+
+/* 侧栏那排小圆点：每个点画的是「它自己那套」的强调色，不跟着当前配色变 */
+.acc-dot[data-acc="indigo"] { --dot: light-dark(#4f46e5, #818cf8); }
+.acc-dot[data-acc="teal"] { --dot: light-dark(#0d9488, #2dd4bf); }
+.acc-dot[data-acc="violet"] { --dot: light-dark(#7c3aed, #a78bfa); }
+.acc-dot[data-acc="amber"] { --dot: light-dark(#ea580c, #fb923c); }
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: var(--fs-md)/1.6 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";
+  font-variant-numeric: tabular-nums;
+}
+
+/* Ruixen 的首页顶部有一层极淡的品牌光晕，页面因此"亮"起来但不抢内容。
+   做成 body 的固定背景层，滚动时不动，也不会影响任何元素的命中区域。
+   幅度压得很低：一旦透过侧栏玻璃，就会在左边缘糊成一条脏带。 */
+body::before {
+  content: "";
+  position: fixed; inset: 0 0 auto; height: 340px;
+  pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(560px 240px at 62% -12%, var(--brand-glow), transparent 72%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--brand-soft) 26%, transparent), transparent);
+  opacity: .62;
+}
+/* 内容统一压在光晕之上 */
+.shell, .toast-wrap, .palette, .modal-backdrop, .menu { position: relative; z-index: 1; }
+.toast-wrap, .palette { position: fixed; }
+.modal-backdrop { position: fixed; }
+.menu { position: fixed; }
+
+::selection { background: var(--brand-soft); color: var(--brand-ink); }
+
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong); border-radius: 999px;
+  border: 3px solid transparent; background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--fg-3); background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+a { color: inherit; text-decoration: none; }
+h1, h2 { margin: 0; font-weight: 600; }
+/* Ruixen 的标题是紧字距的 grotesk，不是衬线：字重 600、tracking -.03em，
+   大字号下才有那种"排版过"的利落感。 */
+h1 {
+  font-size: var(--fs-xl);
+  line-height: 1.15;
+  font-family: var(--font-sans);
+  letter-spacing: -.028em;
+  font-weight: 650;
+}
+h2 { font-size: 17px; letter-spacing: -.012em; }
+code { font-family: var(--font-mono); font-size: .92em; }
+svg { display: block; }
+
+.muted { color: var(--fg-2); }
+.small { font-size: var(--fs-sm); }
+
+/* 只给读屏用的文字：视觉上不可见，但仍在无障碍树里 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* 键盘焦点环轻轻"弹"一下，提示焦点落在哪 —— 只动 transform，不碰布局 */
+:focus-visible { animation: focus-pop var(--dur-2) var(--ease-spring); }
+@keyframes focus-pop { from { outline-offset: 5px; } }
+
+.inline-link { color: var(--brand-ink); text-decoration: underline; text-underline-offset: 2px; }
+
+/* ---------- 跨页面过渡 ----------
+   同源跳转（书签库 → 管理 → 导入）由浏览器做一次快照交叉淡入，
+   页面之间不再是"啪"地闪一下。主题切换会另起一次同文档过渡，
+   那次的动画在 JS 里用 clip-path 圆扩散盖掉这里的默认交叉淡入。 */
+@view-transition { navigation: auto; }
+::view-transition-old(root) { animation: fade-out var(--dur-2) var(--ease-out) both; }
+::view-transition-new(root) { animation: fade-in var(--dur-3) var(--ease-out) both; }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+
+/* ---------- 骨架 ---------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--side-w) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  /* 刚好占满一屏：侧栏是一整列玻璃，短一截会让下面露出背景，
+     看起来像"页面被切开一块"。分类多时由 .side-scroll 内部滚动。 */
+  height: 100vh;
+  max-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-right: 1px solid var(--border-soft);
+  z-index: 2;
+}
+
+/* 分类和标签很多时只有这一段滚动，品牌和导航固定 */
+
+.side-top {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-4) var(--sp-3);
+}
+.side-top-acts { display: flex; align-items: center; gap: var(--sp-2); flex: 0 0 auto; }
+
+/* 手机上分类收进按钮，默认折叠，别把正文顶下去 */
+.side-toggle {
+  display: none; align-items: center; gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--fg-2);
+  font: inherit; font-size: var(--fs-sm); cursor: pointer;
+}
+.side-toggle:hover { border-color: var(--brand-ink); color: var(--brand-ink); }
+.side-toggle .caret { font-size: 9px; transition: transform var(--dur) var(--ease); }
+.sidebar.is-open .side-toggle .caret { transform: rotate(180deg); }
+
+.brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.brand-mark { color: var(--brand); flex: 0 0 auto; transition: transform var(--dur-3) var(--ease-spring); }
+.brand:hover .brand-mark { transform: translateY(-2px) rotate(-6deg); }
+
+/* 顶栏那两个圆按钮（命令面板 / 主题开关）共用外观 */
+.icon-toggle {
+  position: relative; flex: 0 0 auto;
+  width: 30px; height: 30px; padding: 0;
+  display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--fg-2);
+  cursor: pointer; overflow: hidden;
+  transition: border-color var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+.icon-toggle:hover { color: var(--brand-ink); border-color: var(--brand-ink); }
+.icon-toggle:active { transform: scale(.9); }
+/* 磁石开关的静态形：收起时是一颗磁流体球（月牙常驻），展开成一条凹槽。
+   动效全在 fluid.css —— 这里只管"长什么样"。
+   尺寸用 --w 驱动，因为它是唯一会变的那一维（34 → 92px）。 */
+.theme-toggle.lode {
+  --w: 34px;
+  --drop: 20px;
+  width: var(--w); height: 30px;
+  padding: 0;
+  overflow: hidden;
+  isolation: isolate;
+  /* 轨道底面：比按钮底色再深一档，液滴才落得进去 */
+  background: var(--surface);
+  transition: width var(--dur-3) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out),
+              color var(--dur-2) var(--ease-out);
+}
+.theme-toggle.lode:hover,
+.theme-toggle.lode:focus-visible { border-color: var(--border-strong); }
+/* 展开：96px 刚好容下「液滴 + 太阳 + 两颗液珠 + 月牙」 */
+.theme-toggle.lode:is(:hover, :focus-visible) { --w: 92px; }
+
+/* 沟槽：上下两道内阴影压出"凹陷"，底边一道亮线封口 */
+.lode-pit {
+  position: absolute; inset: 5px; border-radius: 999px; opacity: 0;
+  background: linear-gradient(to bottom,
+    light-dark(rgba(9, 9, 11, .055), rgba(0, 0, 0, .5)),
+    light-dark(rgba(9, 9, 11, .012), rgba(0, 0, 0, .18)) 55%,
+    light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .05)));
+  box-shadow:
+    inset 0 1px 2px light-dark(rgba(9, 9, 11, .14), rgba(0, 0, 0, .75)),
+    inset 0 -1px 0 light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .07)),
+    0 1px 0 light-dark(rgba(255, 255, 255, .7), rgba(255, 255, 255, .04));
+  transition: opacity var(--dur-3) var(--ease-out) 60ms;
+  pointer-events: none;
+}
+.theme-toggle.lode:is(:hover, :focus-visible) .lode-pit { opacity: 1; }
+
+/* 两端的日/月刻度：展开时才淡入，静止的液滴压不到它们 */
+.lode-sun, .lode-moon {
+  position: absolute; display: inline-flex; opacity: 0;
+  color: var(--fg-3);
+  transition: opacity var(--dur-2) var(--ease-out);
+  pointer-events: none;
+}
+.lode-sun { left: 29px; top: 50%; margin-top: -6px; }
+.lode-moon { right: 9px; top: 50%; margin-top: -6px; }
+.theme-toggle.lode:is(:hover, :focus-visible) .lode-sun,
+.theme-toggle.lode:is(:hover, :focus-visible) .lode-moon { opacity: .45; }
+
+/* 收起态的月牙：唯一常驻的图标，液滴是它的"替身" */
+.lode-idle {
+  /* inset:0 + margin:auto 居中：不用 translate，transform 要留给悬停的缩放/旋转 */
+  position: absolute; inset: 0; margin: auto;
+  width: 13px; height: 13px;
+  display: inline-flex; color: var(--fg-2);
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-3) var(--ease-spring);
+  pointer-events: none;
+}
+.theme-toggle.lode:is(:hover, :focus-visible) .lode-idle {
+  opacity: 0; transform: scale(.6) rotate(60deg);
+}
+.lode-idle-sun {
+  position: absolute; inset: 0; margin: auto;
+  width: 13px; height: 13px;
+  display: inline-flex; color: var(--fg-2);
+  opacity: 0; transform: scale(.6) rotate(-60deg);
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-3) var(--ease-spring);
+  pointer-events: none;
+}
+/* 暗色：月牙让位给太阳，读作"点我回亮色" */
+:root[data-theme="dark"] .lode-idle { opacity: 0; transform: scale(.6) rotate(60deg); }
+:root[data-theme="dark"] .lode-idle-sun { opacity: 1; transform: none; }
+/* 展开时两颗图标都退场（轨道上已经有日月刻度了） */
+.theme-toggle.lode:is(:hover, :focus-visible) .lode-idle,
+.theme-toggle.lode:is(:hover, :focus-visible) .lode-idle-sun {
+  opacity: 0; transform: scale(.6);
+}
+
+/* 液珠：从壁面渗出的两颗磁性小珠，展开时向液滴靠拢 */
+.lode-a, .lode-b {
+  position: absolute; border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #55555f, #17171c 60%, #08080a);
+  box-shadow: inset -.5px -1px 1px rgba(255, 255, 255, .18), 0 .5px 1.5px rgba(0, 0, 0, .4);
+  opacity: 0; transform: translate(0, 0) scale(.2);
+  transition: opacity 200ms linear, transform 460ms var(--ease-spring);
+  pointer-events: none;
+}
+.lode-a { width: 4px; height: 4px; right: 13px; top: 11px; }
+.lode-b { width: 3px; height: 3px; right: 22px; bottom: 10px; }
+.theme-toggle.lode:is(:hover, :focus-visible) .lode-a {
+  opacity: 1; transform: translate(-17px, 2px) scale(1);
+}
+.theme-toggle.lode:is(:hover, :focus-visible) .lode-b {
+  opacity: 1; transform: translate(-10px, -1px) scale(1);
+}
+
+/* 液滴本体：一个几乎全黑的球，靠内高光/内阴影做出体积 */
+.lode-drop {
+  position: absolute; left: 6px; top: 50%;
+  width: var(--drop); height: var(--drop);
+  margin-top: calc(var(--drop) / -2);
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 26%,
+    #6d6d78 0%, #2a2a31 26%, #101014 56%, #050506 80%, #17171c 100%);
+  box-shadow:
+    inset -1px -1.5px 2px rgba(255, 255, 255, .16),
+    inset 1px 1.5px 3px rgba(0, 0, 0, .9),
+    0 1px 3px rgba(0, 0, 0, .42);
+  transition: transform 520ms cubic-bezier(.3, 1.55, .5, 1),
+              width 380ms var(--ease-out), height 380ms var(--ease-out),
+              margin-top 380ms var(--ease-out),
+              border-radius 400ms var(--ease-out);
+  pointer-events: none;
+}
+/* 硬高光点：磁流体表面那道锐利反光 */
+.lode-drop::before {
+  content: ""; position: absolute; left: 24%; top: 14%;
+  width: 32%; height: 26%; border-radius: 50%;
+  background: radial-gradient(ellipse at 40% 35%,
+    rgba(255, 255, 255, .95), rgba(255, 255, 255, .25) 60%, transparent 78%);
+  transition: transform 520ms cubic-bezier(.3, 1.55, .5, 1);
+}
+
+/* 暗色：液滴被吸到右端并摊开（磁铁咬住了），体积略涨、贴住沟底 */
+/* 暗色：磁流体要比轨道更黑，再补一圈极细边缘光把轮廓从黑底上切出来 */
+:root[data-theme="dark"] .lode-drop {
+  background: radial-gradient(circle at 36% 26%,
+    #8e8e9c 0%, #34343d 22%, #0a0a0d 54%, #000 82%, #121217 100%);
+  box-shadow:
+    inset -1px -1.5px 2px rgba(255, 255, 255, .28),
+    inset 1px 1.5px 3px rgba(0, 0, 0, .95),
+    0 0 0 1px rgba(255, 255, 255, .10),
+    0 1px 3px rgba(0, 0, 0, .65);
+}
+/* 只有"展开 + 暗色"才滑到右端摊开。收起时宽度只有 34px，
+   58px 的位移会被 overflow 裁掉——液滴会整颗消失。 */
+:root[data-theme="dark"] .theme-toggle.lode:is(:hover, :focus-visible) .lode-drop {
+  width: 26px; height: 26px; margin-top: -13px;
+  transform: translate(58px, 0);
+  border-radius: 46% 46% 44% 44%;
+}
+:root[data-theme="dark"] .lode-drop::before { transform: translate(1px, 1px) scaleX(.8); opacity: .7; }
+:root[data-theme="dark"] .lode-sun { opacity: 0 !important; }
+:root[data-theme="dark"] .lode-a { transform: translate(-30px, 1px) scale(.7); }
+:root[data-theme="dark"] .lode-b { transform: translate(-24px, -1px) scale(.7); }
+.brand-name {
+  font-family: var(--font-sans);
+  font-size: 15px; font-weight: 650; letter-spacing: -.02em;
+  white-space: nowrap;
+}
+/* 品牌标记收紧成 Ruixen 那种实心几何形状，跟着强调色走 */
+.brand-mark { width: 18px; height: 18px; }
+.anon-foot { border-top: 1px solid var(--border-soft); }
+.anon-note { margin: 0; font-size: var(--fs-sm); line-height: 1.6; color: var(--fg-3); }
+.side-login { flex: 0 0 auto; }
+
+/* 导航：Ruixen 的 tab 组是「浅底槽 + 白色滑块 + 发丝描边」，
+   槽本身不带描边，靠底色差就读得出来。 */
+.nav {
+  display: flex; gap: 2px;
+  margin: 0 var(--sp-3) var(--sp-4);
+  padding: 3px;
+  background: var(--surface-2);
+  border-radius: 10px;
+}
+.nav a {
+  flex: 1; text-align: center;
+  padding: 6px 4px;
+  border-radius: 7px;
+  color: var(--fg-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease),
+              box-shadow var(--dur-2) var(--ease);
+}
+.nav a:hover { color: var(--fg); }
+.nav a.is-active {
+  background: var(--surface); color: var(--fg); font-weight: 550;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06), inset 0 0 0 1px var(--border);
+}
+/* 导航页签：白底以外再给一道 12px 的品牌色短线。白光 pill 在纯白页面上只有
+   描边在说话，加下划线之后"当前在哪一页"是扫一眼就知道的，不靠分辨描边深浅。 */
+.nav a { position: relative; }
+.nav a::after {
+  content: ""; position: absolute; left: 50%; bottom: 4px;
+  width: 12px; height: 2px; margin-left: -6px; border-radius: 999px;
+  background: var(--brand);
+  opacity: 0; transform: scaleX(.35);
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-spring);
+}
+.nav a:hover::after { opacity: .4; transform: scaleX(1); }
+.nav a.is-active::after { opacity: 1; transform: scaleX(1); }
+
+/* 分类和标签很多时只有这一段滚动，品牌和导航固定 */
+.side-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: var(--sp-4); }
+
+.tree-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--sp-4) var(--sp-4) 6px;
+  font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--fg-3); font-weight: 500; font-family: var(--font-mono);
+}
+
+.mini {
+  border: none; background: none; color: var(--fg-3); cursor: pointer;
+  font-size: 16px; line-height: 1; padding: 0 4px; border-radius: 5px;
+}
+.mini:hover { color: var(--brand-ink); background: var(--surface-2); }
+
+.tree { display: flex; flex-direction: column; gap: 1px; padding: 0 var(--sp-2); }
+
+.tree-row {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 30px;
+  padding: 5px var(--sp-2);
+  border-radius: 7px;
+  color: var(--fg-2);
+  font-size: 13px;
+  font-weight: 450;
+  transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+.tree-row:hover { background: var(--surface-2); color: var(--fg); }
+/* 激活态用「浅色底 + 强调色文字 + 左侧的一道竖线」，比整块实心色更安静，
+   也更容易在一长串分类里定位自己。 */
+.tree-row.is-active {
+  background: var(--brand-soft); color: var(--brand-ink); font-weight: 550;
+  box-shadow: inset 2px 0 0 var(--brand);
+}
+.tree-name { flex: 1; display: flex; align-items: center; gap: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-ico { font-size: 13px; }
+.tree-row .count {
+  font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums;
+  min-width: 1.4em; text-align: right;
+}
+.tree-row.is-active .count { color: var(--brand-ink); }
+
+.twist {
+  width: 14px; flex: 0 0 14px; text-align: center;
+  font-size: 10px; color: var(--fg-3);
+  transition: transform var(--dur) var(--ease);
+  cursor: pointer;
+}
+.twist.placeholder { visibility: hidden; cursor: default; }
+.tree-node.open > .tree-row .twist { transform: rotate(90deg); }
+
+.tags { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 var(--sp-3); }
+
+.tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid transparent; border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 11.5px; font-weight: 500; color: var(--fg-2);
+  transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+.tag span { color: var(--fg-3); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.tag:hover { background: var(--surface-3); color: var(--fg); }
+.tag.is-active {
+  background: var(--brand-soft); color: var(--brand-ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent);
+}
+.tag.is-active span { color: var(--brand-ink); opacity: .7; }
+
+.side-foot {
+  flex-shrink: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+}
+.side-user { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.side-user-name { font-size: var(--fs-sm); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-acts { display: flex; gap: 4px; }
+
+/* 配色选择：四个点各画自己那套色板的强调色，所以切走之后还能认出没选的那些。
+   选中态靠「光晕 + 不透明」表达，不靠颜色本身——色觉障碍下也看得出来（另外有 aria-pressed）。 */
+.accents {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4) 0;
+}
+.accents-label { font-size: var(--fs-sm); color: var(--fg-3); }
+.acc-row { display: flex; gap: 8px; margin-left: auto; }
+.acc-dot {
+  width: 16px; height: 16px; padding: 0; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--dot) 55%, transparent);
+  border-radius: 50%;
+  background: var(--dot);
+  opacity: .5;
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-spring),
+              box-shadow var(--dur-2) var(--ease);
+}
+.acc-dot:hover { opacity: 1; transform: scale(1.14); }
+.acc-dot:active { transform: scale(.9); }
+/* 选中态由 <html data-accent> 决定，不在 JS 里加类：
+   head 里的脚本已经把这个属性写好了，所以首帧就是对的，不会先亮错一个再跳。 */
+/* 选中：底色挖开一圈（--bg 做间隔环）+ 一道同色细环 + 外围淡晕。
+   三层套起来才像一颗"落在纸上、边缘有张力"的漆滴，单层 3px 光晕像状态灯。 */
+:root[data-accent="indigo"] .acc-dot[data-acc="indigo"],
+:root[data-accent="teal"] .acc-dot[data-acc="teal"],
+:root[data-accent="violet"] .acc-dot[data-acc="violet"],
+:root[data-accent="amber"] .acc-dot[data-acc="amber"] {
+  opacity: 1;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 3px var(--dot),
+    0 0 0 6px color-mix(in srgb, var(--dot) 20%, transparent);
+}
+:root[data-accent="indigo"] .acc-dot[data-acc="indigo"]:hover,
+:root[data-accent="teal"] .acc-dot[data-acc="teal"]:hover,
+:root[data-accent="violet"] .acc-dot[data-acc="violet"]:hover,
+:root[data-accent="amber"] .acc-dot[data-acc="amber"]:hover { transform: scale(1.08); }
+/* 触屏没有 hover 可以补，点默认就要看得清 */
+@media (hover: none) { .acc-dot { opacity: .85; } }
+
+/* ---------- 主区 ---------- */
+
+.main { padding: var(--sp-5) clamp(18px, 3.2vw, 44px) 80px; min-width: 0; max-width: 1680px; }
+
+.page-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--sp-4); flex-wrap: wrap;
+  margin-bottom: var(--sp-5);
+  padding-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--border-soft);
+}
+.topbar {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--sp-4); flex-wrap: wrap;
+  margin-bottom: var(--sp-5); padding-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-title { display: flex; align-items: baseline; gap: 10px; }
+.topbar-tools { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+
+.page-head-text { min-width: 0; }
+/* Ruixen 的眉标是「小号大写 + 宽字距 + 纯灰」，不用强调色——
+   强调色留给真正可点的东西（链接、激活态），页面才不会花。 */
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  font-weight: 500;
+  font-family: var(--font-mono);
+}
+.page-sub { margin: 8px 0 0; font-size: 13px; color: var(--fg-2); }
+.page-head-tools { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+
+.search { position: relative; }
+.search-ico {
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  color: var(--fg-3); pointer-events: none;
+}
+/* Ruixen 的输入框：稍微降一档底色（muted 50%）、发丝描边、无阴影，
+   聚焦才亮出焦点环。搜索框放 300px，留出呼吸但不占满一行。 */
+.search input {
+  width: 300px; max-width: 60vw;
+  padding: 8px 12px 8px 33px;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface-2); color: var(--fg);
+  font: inherit; font-size: 13.5px;
+  transition: border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease),
+              background-color var(--dur-2) var(--ease);
+}
+.search input::placeholder { color: var(--fg-3); }
+.search input:hover { border-color: var(--border-strong); }
+.search input:focus {
+  outline: none; border-color: var(--brand); background: var(--surface);
+  box-shadow: 0 0 0 3px var(--brand-glow);
+}
+/* 本地过滤生效时给框一点颜色，让人知道现在看的不是全部 */
+.search.is-filtering input {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand-soft) 55%, var(--surface));
+}
+
+/* ---------- 按钮 ---------- */
+
+/* 按钮：Ruixen 的 CTA 是"墨色实心"——亮色下纯黑、暗色下纯白，
+   品牌色只出现在描边/文字悬停和焦点环上。这样主按钮永远最高对比，
+   而页面的一抹颜色留给了激活态，不会两处都在喊。
+   半径 9px（Ruixen 的 --radius .625rem 同档），高度 34px 上下。 */
+.btn {
+  position: relative; overflow: hidden;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background-color: var(--surface); color: var(--fg);
+  font: inherit; font-size: 13.5px; font-weight: 500;
+  letter-spacing: -.006em;
+  cursor: pointer; white-space: nowrap;
+  box-shadow: var(--shadow-1);
+  transition: background-color var(--dur-2) var(--ease-out), border-color var(--dur-2) var(--ease-out),
+              color var(--dur-2) var(--ease-out), transform var(--dur-1) var(--ease-out),
+              box-shadow var(--dur-2) var(--ease-out);
+}
+.btn:hover { border-color: var(--border-strong); background-color: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+/* 按下要"陷"下去一点，比只换颜色诚实得多 */
+.btn:active { transform: scale(.98); }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.btn:disabled:active { transform: none; }
+/* 主按钮是「墨钉」：一块纯墨实心，顶上一道 1px 内高光、底边一道品牌色镶边。
+   镶边是这块材料唯一表达"厚度"的地方——悬停时涨到 3px 并整体抬 1px，
+   按下时收平并落回去。像按一颗有底座的键，而不是一张贴在页面上的色纸。
+   品牌色只做镶边、不做整块填充，主按钮因此仍是全站对比最高的一块墨。 */
+.btn.primary {
+  --stud-h: 2px;
+  --stud: color-mix(in srgb, var(--brand) 52%, var(--fg));
+  --stud-hot: color-mix(in srgb, var(--brand) 82%, var(--fg));
+  /* 指针光的角度：一块窄薄的镜面反光，角度跟着指针走（JS 写 --spec-a）。
+     光条永远和"指针→按钮中心"垂直，像斜着照过来的一道光。
+     角度改由 JS 用 atan2 算好整度写进 --spec-a，不在这里做 atan2 运算：
+     calc 里的 atan2 每次指针移动都要重新求值，按钮一多就会拖累那一帧。
+     静息给 90deg（正上方的光），指针进来之前按钮也不是一块死墨。 */
+  --spec-a: 90deg;
+  /* 底色走渐变而不是 background-color：悬停时背景图整体换成"镜面亮起来"的那一层，
+     如果这一层是实色，换图的瞬间颜色会跳一下。 */
+  background-color: transparent;
+  border-color: color-mix(in srgb, var(--fg) 90%, var(--brand));
+  color: var(--bg);
+  font-weight: 550;
+  /* 三层：顶面内高光 + 指针镜面 + 底边品牌镶边。
+     镜面静息态收成 0（铺满整块会把纯墨冲成灰），悬停才张开。 */
+  background-image:
+    linear-gradient(180deg,
+      light-dark(rgba(255, 255, 255, .12), rgba(255, 255, 255, .30)),
+      transparent 46%),
+    linear-gradient(var(--spec-a, 90deg),
+      /* 两端透明色也要按主题各写一份：渐变里的 light-dark() 只在<color>位置生效，
+         两端写成透明、中间挂 --spec，整条梯度才是"跟着主题变亮"的 */
+      light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0)) 38%,
+      var(--spec, light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0))) 50%,
+      light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0)) 62%),
+    linear-gradient(var(--fg), var(--fg));
+  box-shadow:
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, .16), rgba(255, 255, 255, .55)),
+    inset 0 calc(var(--stud-h) * -1) 0 var(--stud),
+    var(--shadow-1);
+}
+.btn.primary:hover {
+  border-color: color-mix(in srgb, var(--fg) 84%, var(--brand));
+  --stud-h: 3px;
+  --spec: light-dark(rgba(255, 255, 255, .17), color-mix(in srgb, var(--brand) 17%, transparent));
+  --lift-y: -1px;
+  box-shadow:
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, .22), rgba(255, 255, 255, .7)),
+    inset 0 calc(var(--stud-h) * -1) 0 var(--stud-hot),
+    0 0 0 3px var(--brand-glow),
+    var(--shadow-1);
+}
+.btn.primary:focus-visible { --spec: light-dark(rgba(255, 255, 255, .14), color-mix(in srgb, var(--brand) 26%, transparent)); }
+/* 按下去：镶边收平、整体落回 1px —— 位移由 fluid.css 的 --lift-y 消费 */
+.btn.primary:active { --stud-h: 1px; --lift-y: 1px; }
+.btn.primary:disabled {
+  opacity: .45; cursor: not-allowed; transform: none;
+  --stud: var(--border); --stud-hot: var(--border);
+}
+/* 小号主按钮只有 22px 高，2px 镶边会变成"方块底"，收窄到 1px */
+.btn.sm.primary { --stud-h: 1px; }
+.btn.ghost { border-color: transparent; background-color: transparent; color: var(--fg-2); box-shadow: none; }
+.btn.ghost:hover { background-color: var(--surface-2); color: var(--fg); border-color: transparent; }
+.btn.danger { color: var(--danger); }
+.btn.danger:hover { border-color: color-mix(in srgb, var(--danger) 55%, transparent); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
+.btn.sm { padding: 4px 9px; font-size: var(--fs-sm); border-radius: var(--r-sm); }
+
+/* 划过时那道光保留，但压淡——Ruixen 不做花哨高光，只在实心块上给一点光泽 */
+.btn.primary::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 36%, rgba(255, 255, 255, .22) 50%, transparent 64%);
+  transform: translateX(-130%);
+}
+.btn.primary:hover::after { animation: sheen var(--dur-4) var(--ease-out); }
+@keyframes sheen { to { transform: translateX(130%); } }
+
+/* 点击水波：JS 插一个 .ripple，动画跑完自己删掉 */
+.ripple {
+  position: absolute; border-radius: 999px; pointer-events: none;
+  background: currentColor; opacity: .2;
+  transform: scale(0); animation: ripple-out var(--dur-4) var(--ease-out) forwards;
+}
+@keyframes ripple-out { to { transform: scale(2.8); opacity: 0; } }
+
+/* 图标按钮：卡片角落那两个小动作。原来用 --fg-3，在白卡上淡得像是禁用态；
+   抬到 --fg-2、给一个 24px 的方形落点，它才读起来是"能按的东西"。
+   图标统一 14px 线稿 SVG（模板里替掉了 ✎ / ⋯ 这两个字符）。 */
+.icon-btn {
+  display: inline-grid; place-items: center;
+  width: 24px; height: 24px;
+  border: none; background: none; color: var(--fg-2);
+  cursor: pointer; padding: 0; border-radius: 6px;
+  line-height: 1;
+  transition: color var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out),
+              transform var(--dur-1) var(--ease-spring);
+}
+.icon-btn svg { display: block; transition: transform var(--dur-2) var(--ease-spring); }
+/* 悬停：底下一块浅底 + 图标抬 1px，指针离开时弹簧落回 */
+.icon-btn:hover { color: var(--brand-ink); background: var(--surface-2); }
+.icon-btn:hover svg { transform: translateY(-1px); }
+.icon-btn:active { transform: scale(.88); }
+.icon-btn:active svg { transform: translateY(0) scale(.94); }
+
+/* ---------- 卡片网格 ---------- */
+
+/* 卡片倾斜要一个 3D 视距，挂在网格上比挂在每张卡片上省事 */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 14px;
+  /* 同一行的卡片等高（grid 默认 stretch）：卡片是按条目看一眼的东西，
+     参差不齐会让整页像"没加载完"。内容多少由卡内固定行数消化，
+     不靠高度自由伸缩——详见 .card-desc 的两行占位。 */
+  align-items: stretch;
+  perspective: 1400px;
+}
+.grid > * { min-width: 0; }
+
+/* 指针跟随的两个倾角，注册成 <angle> 之后才吃得到 transition 的平滑 */
+@property --rx { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@property --ry { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+
+.card {
+  position: relative;
+  /* 网格项默认 min-width:auto，长标题会把整列撑破，必须归零 */
+  min-width: 0;
+  display: flex; flex-direction: column;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  /* 静息态不投阴影：Ruixen 全靠描边 + 底色分层。1px 内高光把卡片顶面提起来一点，
+     暗色下尤其明显，卡片不会糊进背景。 */
+  box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .04));
+  /* 抬升/倾斜都只动 transform，不碰布局；--rx/--ry 由指针事件写 */
+  transform: translate3d(0, var(--lift, 0), 0) rotateX(var(--rx)) rotateY(var(--ry));
+  transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out),
+              --rx var(--dur-3) var(--ease-out), --ry var(--dur-3) var(--ease-out);
+  /* 入场动画不在这里：交给 fluid.css 的滚动揭示（.rv-armed → .is-rv），
+     由 IntersectionObserver 决定何时播。两套入场叠在一起会互相抢 opacity / filter。 */
+}
+
+/* 全站唯一的主打动效：抬 2px、描边变深、图标轻放大。
+   位移比原来小（3→2px），但描边和阴影一起动，反而更"有回应"。 */
+.card:hover, .card:focus-within {
+  --lift: -2px;
+  border-color: var(--border-strong);
+  box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .05)),
+              var(--shadow-lift);
+}
+.card:hover .favicon, .card:focus-within .favicon { transform: scale(1.05); }
+
+/* 光斑压在内容底下，所以要给内容抬一层。Ruixen 的 spotlight 很淡、范围更大。 */
+.card::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%),
+              var(--brand-glow), transparent 68%);
+  opacity: 0; transition: opacity var(--dur-2) var(--ease-out);
+}
+.card:hover::before { opacity: .55; }
+.card-link, .card-foot { position: relative; z-index: 1; }
+
+.card.is-private { background-color: color-mix(in srgb, var(--surface) 92%, var(--surface-2)); }
+.card.dragging {
+  opacity: .45; --lift: 0; animation: none;
+  transform: scale(.97) rotate(1.2deg);
+  box-shadow: var(--shadow-2);
+}
+.card.drop-target { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+/* 搜索/筛选时被滤掉的卡片：JS 用 FLIP 把邻居滑过去，滑动结束再 display:none */
+.card.is-filtered-out { display: none; }
+
+.card-link { display: flex; gap: 12px; padding: 15px 15px 8px; align-items: flex-start; flex: 1; }
+
+/* 图标托：Ruixen 的元素都有一圈"内描边"，即使图标是白底也不会糊在卡片上。
+   40px 方块 + surface-2 底 + 1px 内描边，图标本体 22px 居中。
+   暗色下底板换成浅色：不少站点给的是深色/透明底的 SVG（GitHub、ping.sx），
+   放在深色托上会整个消失——图标是外部素材，不能指望它自带对比度。 */
+.favicon {
+  flex: 0 0 40px; width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border-radius: 10px; overflow: hidden;
+  background: light-dark(var(--surface-2), rgba(255, 255, 255, .93));
+  box-shadow: inset 0 0 0 1px light-dark(var(--border-soft), rgba(0, 0, 0, .06));
+  transition: transform var(--dur-2) var(--ease-spring);
+}
+.favicon img {
+  width: 22px; height: 22px; object-fit: contain;
+  transition: opacity var(--dur-3) var(--ease-out), transform var(--dur-3) var(--ease-spring);
+}
+/* 图标是异步解码的，直接蹦出来会闪一下；解码完再淡入 */
+.favicon img.is-loading { opacity: 0; transform: scale(.8); }
+.favicon .fallback {
+  width: 100%; height: 100%;
+  display: grid; place-items: center;
+  color: #fff; font-weight: 600; font-size: 15px;
+  letter-spacing: -.02em;
+}
+.fallback.sm {
+  display: inline-grid; width: 20px; height: 20px; border-radius: 5px;
+  place-items: center; color: #fff; font-size: 11px; font-weight: 650;
+}
+
+.card-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.card-title {
+  display: block; font-weight: 550; font-size: 14px; line-height: 1.45; color: var(--fg);
+  letter-spacing: -.011em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 域名用等宽字体、小一号、灰色：像一条"来源标注"，不与标题抢注意力 */
+.card-host {
+  display: block; font-size: 11.5px; color: var(--fg-3); margin-top: 3px;
+  font-family: var(--font-mono); letter-spacing: -.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 描述占一行高度（1.55em ≈ 19px）：有描述就截断到一行，没描述也留出这一行——
+   卡片的"文字区"因此恒定，同一行的卡不会被"有的写了、有的没写"拉出高低差。
+   只给一行而不是两行：两行的占位在只有标题的卡上会留下一大块空白，
+   而一行刚好让"标题+域名+一行摘要"成为固定骨架，空白小到看不出来。 */
+.card-desc {
+  display: block; margin-top: 7px; font-size: var(--fs-sm); line-height: 1.55; color: var(--fg-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-height: 1.55em;
+}
+
+.card-foot {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  padding: 2px 12px 11px 15px; min-height: 30px;
+  /* 卡片被拉到等高后，多余的空白全部落到标签行上方：标签贴着卡片底边对齐，
+     整行看过去标签在同一条基线上，而不是浮在半空。 */
+  margin-top: auto;
+}
+/* 标签从卡片底边轻轻长出来 */
+.card-foot .chip { animation: chip-in var(--dur-3) var(--ease-out) both; }
+@keyframes chip-in { from { opacity: 0; transform: translateY(4px); } }
+
+/* 标签片：Ruixen 的 pill 是「浅底 + 无描边 + 小号 medium」，
+   不用灰描边（描边一多，卡片角落就变得毛躁）。 */
+.chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid transparent;
+  font-size: 11px; font-weight: 500; color: var(--fg-2);
+  letter-spacing: -.004em;
+}
+.chip.warn {
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 26%, transparent);
+}
+
+/* 内网徽标：默认淡淡的（没探通），探通了才亮起来，避免让人误以为已经在走内网 */
+.chip.lan {
+  display: inline-flex; align-items: center; gap: 3px;
+  color: var(--fg-3); background: var(--surface-2);
+  border-color: transparent;
+  transition: color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease),
+              background var(--dur-2) var(--ease);
+}
+.chip.lan svg { flex: none; }
+.card.via-lan .chip.lan {
+  color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+}
+.card.via-lan .card-host::after {
+  content: " · 内网直连"; color: var(--ok); opacity: .85;
+}
+.lan-hint {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px;
+  background: var(--surface-2); color: var(--fg-3); font-size: 11.5px;
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: middle;
+}
+.form-hint { display: block; margin-top: 5px; font-size: 11.5px; color: var(--fg-3); line-height: 1.5; }
+
+.lock {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; color: var(--fg-3);
+  margin-left: auto;
+}
+.card.is-private .lock { color: var(--brand-ink); }
+.cell-title .lock { display: inline-flex; margin: 0 5px 0 0; vertical-align: middle; color: var(--brand-ink); }
+
+/* 卡片右下角那组动作：第一个自动贴右，后面几个紧跟 */
+.card-foot :is(.lock, .edit, .more) { margin-left: auto; }
+.card-foot :is(.lock, .edit, .more) ~ :is(.lock, .edit, .more) { margin-left: 0; }
+
+/* 平时藏起来，悬浮或键盘聚焦才滑出来；触屏没有 hover，直接常驻 */
+.card-foot :is(.edit, .more) {
+  opacity: 0; transform: translateX(4px);
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out),
+              color var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out);
+}
+.card:hover :is(.edit, .more), :is(.edit, .more):focus-visible { opacity: 1; transform: none; }
+@media (hover: none) { .card-foot :is(.edit, .more) { opacity: 1; transform: none; } }
+/* 手指点的地方别摆键盘提示：手机上 ⌘⇧L 和 ↑↓ 都是空头支票 */
+@media (hover: none) and (pointer: coarse) {
+  .pal-item kbd, .palette-foot { display: none; }
+}
+
+/* ---------- 表格：液面板 ---------- */
+
+/* 表格容器是"一大块面板"，最容易被衬成一张贴在渐变上的白卡。
+   给底部加一缕极淡的液体底光、顶部一道内高光，再让它跟着悬停轻微化开边角，
+   它就和卡片属于同一个世界了。 */
+.table-wrap {
+  position: relative;
+  background:
+    radial-gradient(120% 70% at 12% 0%,
+      color-mix(in srgb, var(--brand) 4%, transparent), transparent 58%),
+    radial-gradient(100% 60% at 92% 102%,
+      color-mix(in srgb, var(--fluid-2) 5%, transparent), transparent 60%),
+    var(--surface);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--r-lg) + var(--morph, 0) * 1px);
+  overflow: auto;
+  box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .04));
+  transition: border-radius var(--dur-3) var(--squish), border-color var(--dur-2) var(--ease-out),
+              box-shadow var(--dur-2) var(--ease-out);
+}
+.table-wrap:hover {
+  --morph: 2;
+  border-color: var(--border-strong);
+  box-shadow: inset 0 1px 0 light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .05)),
+              var(--shadow-lift);
+}
+
+.table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.table th {
+  text-align: left; font-weight: 600; font-size: 12px; letter-spacing: .03em; color: var(--fg-2);
+  padding: 11px 12px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 1;
+  /* 表头是半透的：滚动时下面的行会从它底下一带而过，比实色更像一层液面 */
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+}
+.table td { padding: 9px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
+.table tr:last-child td { border-bottom: none; }
+.table tbody tr { transition: background var(--dur-2) var(--ease-out); }
+/* 行悬停：用一层从左渗出的淡光代替纯灰底 */
+.table tbody tr:hover {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--brand) 7%, transparent), transparent 62%);
+}
+.table tr.selected { background: var(--brand-soft); }
+
+.col-check { width: 36px; }
+.col-icon { width: 34px; }
+.col-act { width: 1%; white-space: nowrap; text-align: right; }
+.col-icon img { width: 20px; height: 20px; object-fit: contain; }
+
+.cell-title { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+.cell-url { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12.5px; }
+.cell-url a { color: var(--fg-2); }
+.cell-url a:hover { color: var(--brand-ink); }
+.cell-cat, .cell-tags { color: var(--fg-2); }
+.cell-tags .chip { margin-right: 3px; }
+.cell-status { white-space: nowrap; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--danger); }
+
+input[type=checkbox] { accent-color: var(--brand); width: 15px; height: 15px; }
+
+.badge {
+  padding: 2px 8px; border-radius: 999px; font-size: 11.5px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.badge.done { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.badge.failed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.badge.running { color: var(--brand-ink); border-color: color-mix(in srgb, var(--brand-ink) 35%, transparent); }
+.badge.cancelled { color: var(--fg-3); }
+
+.bulkbar {
+  display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
+  margin-bottom: var(--sp-3); padding: 9px 14px;
+  background: var(--brand-soft); border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent);
+  border-radius: var(--r-md); font-size: 13.5px;
+}
+
+/* ---------- 面板 ---------- */
+
+.panel {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: var(--sp-4) 18px; margin-bottom: var(--sp-4);
+}
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-3); flex-wrap: wrap; }
+
+.hint { color: var(--fg-2); font-size: 13.5px; margin: 0 0 var(--sp-4); max-width: 900px; }
+.hint b { color: var(--fg); font-weight: 600; }
+
+.actions { display: flex; gap: var(--sp-2); margin-top: var(--sp-4); align-items: center; }
+.actions.wrap { flex-wrap: wrap; }
+
+.drop { border: 1px dashed var(--border); border-radius: var(--r-md); overflow: hidden; background: var(--surface); transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.drop.dragover { border-color: var(--brand); background: var(--brand-soft); }
+.drop textarea {
+  width: 100%; border: none; background: transparent; color: var(--fg);
+  padding: 13px; font: 13px/1.6 var(--font-mono);
+  resize: vertical; display: block;
+}
+.drop textarea:focus { outline: none; }
+.drop-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 12px; background: var(--surface-2); border-top: 1px solid var(--border-soft);
+}
+
+.opts { display: flex; flex-wrap: wrap; gap: 14px 20px; margin-top: var(--sp-4); align-items: center; font-size: 13.5px; color: var(--fg-2); }
+.opts label { display: flex; flex-direction: column; gap: 5px; }
+.opts label.inline { flex-direction: row; align-items: center; gap: 7px; }
+.opts label.grow { flex: 1; min-width: 220px; }
+.opts select, .opts input[type=text] {
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface); color: var(--fg); font: inherit; font-size: 13.5px;
+}
+.opts input[type=text] { width: 100%; }
+
+.stat-row { display: flex; gap: var(--sp-4); flex-wrap: wrap; font-size: 13px; color: var(--fg-2); }
+.stat-row b { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+.bar { height: 7px; background: var(--surface-2); border-radius: 999px; overflow: hidden; margin: 10px 0; border: 1px solid var(--border-soft); }
+.bar-fill { height: 100%; background: var(--brand); transition: width .3s var(--ease); }
+
+pre { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: var(--r-md); padding: 11px; font-size: 12px; max-height: 260px; overflow: auto; white-space: pre-wrap; font-family: var(--font-mono); }
+details summary { cursor: pointer; color: var(--fg-2); font-size: 13px; margin: 10px 0 4px; }
+
+.empty {
+  text-align: center; padding: 72px var(--sp-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-xl);
+  background:
+    radial-gradient(420px 160px at 50% 0%, var(--brand-glow), transparent 72%);
+  color: var(--fg-2);
+}
+.empty.sm { padding: 26px; }
+.empty-title {
+  margin: 0 0 6px; font-family: var(--font-sans); font-size: 19px;
+  font-weight: 600; letter-spacing: -.02em; color: var(--fg);
+}
+.empty p { margin: 0 0 8px; }
+.empty .btn { margin-top: 12px; }
+.empty.is-instant { animation: fade-in var(--dur-3) var(--ease-out); }
+
+/* ---------- 弹层与提示 ---------- */
+
+.modal-backdrop {
+  position: fixed; inset: 0;
+  /* 遮罩本身也是磨砂的：弹层后面的内容模糊掉，注意力才收得回来 */
+  background: color-mix(in srgb, #14120f 46%, transparent);
+  backdrop-filter: blur(5px) saturate(.9);
+  -webkit-backdrop-filter: blur(5px) saturate(.9);
+  display: grid; place-items: center; z-index: 50; padding: var(--sp-4);
+  animation: scrim-in var(--dur-3) var(--ease-out);
+}
+@keyframes scrim-in { from { opacity: 0; backdrop-filter: blur(0); } }
+/* 关闭：先演完再真正 hidden，否则弹层会"啪"地消失 */
+.modal-backdrop.is-closing { animation: scrim-out var(--dur-2) var(--ease-out) forwards; }
+@keyframes scrim-out { to { opacity: 0; } }
+.modal {
+  background: var(--surface); border-radius: var(--r-xl); border: 1px solid var(--border);
+  width: min(560px, 100%); max-height: 88vh; overflow: auto;
+  padding: 22px 22px 18px;
+  box-shadow: var(--shadow-2);
+  animation: rise-in var(--dur-3) var(--ease-out);
+}
+@keyframes rise-in { from { opacity: 0; transform: translateY(8px) scale(.99); } }
+.modal-backdrop.is-closing .modal { animation: sink-out var(--dur-2) var(--ease-in-out) forwards; }
+@keyframes sink-out { to { opacity: 0; transform: translateY(6px) scale(.985); } }
+.modal h2 { margin-bottom: var(--sp-4); }
+
+.form-row { margin-bottom: 13px; }
+.form-row label { display: block; margin-bottom: 5px; font-size: var(--fs-sm); color: var(--fg-2); }
+.form-row input, .form-row textarea, .form-row select {
+  width: 100%; padding: 8px 11px;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface-2); color: var(--fg);
+  font: inherit; font-size: 13.5px;
+  transition: border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease),
+              background-color var(--dur-2) var(--ease);
+}
+.form-row input:focus, .form-row textarea:focus, .form-row select:focus {
+  outline: none; border-color: var(--brand); background: var(--surface);
+  box-shadow: 0 0 0 3px var(--brand-glow);
+}
+.form-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); margin-top: 18px; }
+.form-actions .danger { margin-right: auto; }
+
+.check-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.check-row input { margin-top: 3px; width: 16px; height: 16px; }
+.check-row span { display: flex; flex-direction: column; gap: 1px; }
+.check-row b { font-size: 13.5px; font-weight: 600; }
+.check-row small { font-size: var(--fs-sm); color: var(--fg-2); }
+
+/* 破坏性操作的两个选项：长得像卡片，后果写在标题下面一行 */
+.choices { display: grid; gap: 8px; margin-top: 6px; }
+.btn.choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; padding: 11px 13px; text-align: left; white-space: normal;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
+  font-size: 13.5px;
+}
+.btn.choice b { font-weight: 600; }
+.btn.choice small { color: var(--fg-2); font-size: var(--fs-sm); line-height: 1.5; }
+.btn.choice:hover { border-color: var(--brand); background: var(--brand-soft); }
+.btn.choice.danger b { color: var(--danger); }
+.btn.choice.danger:hover {
+  border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.toast-wrap {
+  position: fixed; right: 20px; bottom: 20px; z-index: 80;
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-2);
+  pointer-events: none;
+}
+.toast {
+  position: relative; overflow: hidden;
+  pointer-events: auto; cursor: pointer;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-left: 3px solid var(--brand);
+  border-radius: var(--r-md); padding: 10px 15px; font-size: 13.5px;
+  box-shadow: var(--shadow-2); max-width: min(380px, calc(100vw - 40px));
+  animation: toast-in var(--dur-3) var(--ease-spring);
+}
+/* 书签标题可以很长，超过两行就折起来，别把提示条抻成一张说明书 */
+.toast > span {
+  min-width: 0; line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateX(14px) scale(.96); } }
+.toast.is-out { animation: toast-out var(--dur-2) var(--ease-in-out) forwards; }
+@keyframes toast-out { to { opacity: 0; transform: translateX(20px) scale(.96); } }
+.toast.error { border-left-color: var(--danger); }
+.toast.ok { border-left-color: var(--ok); }
+/* 底部一条细线走完就自动关，用户知道还剩多久 */
+.toast .ttl {
+  position: absolute; left: 0; bottom: 0; height: 2px; width: 100%;
+  background: currentColor; opacity: .25; transform-origin: left;
+  animation: toast-ttl linear forwards;
+}
+@keyframes toast-ttl { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.toast .undo {
+  flex: none; white-space: nowrap;
+  margin-left: 6px; border: none; background: none; color: var(--brand-ink);
+  font: inherit; font-weight: 650; cursor: pointer; padding: 2px 4px; border-radius: var(--r-sm);
+}
+.toast .undo:hover { background: var(--brand-soft); }
+
+/* ---------- 右键菜单 ---------- */
+
+.menu {
+  position: fixed; z-index: 70; min-width: 186px; padding: 5px;
+  background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  display: flex; flex-direction: column;
+  animation: menu-in var(--dur-2) var(--ease-out);
+  transform-origin: var(--ox, 0) var(--oy, 0);
+}
+@keyframes menu-in { from { opacity: 0; transform: scale(.94); } }
+.menu.is-closing { animation: menu-out var(--dur-1) var(--ease-in-out) forwards; }
+@keyframes menu-out { to { opacity: 0; transform: scale(.96); } }
+.menu-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border: none; background: none; color: var(--fg);
+  font: inherit; font-size: 13px; text-align: left; border-radius: var(--r-sm);
+  cursor: pointer; white-space: nowrap;
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-2); outline: none; }
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.menu-item .k { margin-left: auto; color: var(--fg-3); font-family: var(--font-mono); font-size: 11px; }
+.menu-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+
+/* ---------- 命令面板（⌘K） ---------- */
+
+.palette { position: fixed; inset: 0; z-index: 75; padding: 12vh var(--sp-4) var(--sp-4); display: grid; justify-items: center; align-content: start; }
+.palette-scrim {
+  position: absolute; inset: 0;
+  background: color-mix(in srgb, #14120f 46%, transparent);
+  backdrop-filter: blur(6px) saturate(.9); -webkit-backdrop-filter: blur(6px) saturate(.9);
+  animation: scrim-in var(--dur-3) var(--ease-out);
+}
+.palette.is-closing .palette-scrim { animation: scrim-out var(--dur-2) var(--ease-out) forwards; }
+.palette-box {
+  position: relative; width: min(620px, 100%);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2); overflow: hidden; display: flex; flex-direction: column;
+  animation: palette-in var(--dur-3) var(--ease-out);
+}
+.palette.is-closing .palette-box { animation: sink-out var(--dur-2) var(--ease-in-out) forwards; }
+@keyframes palette-in { from { opacity: 0; transform: translateY(-12px) scale(.98); } }
+.palette-input {
+  width: 100%; padding: 15px 18px; border: none; border-bottom: 1px solid var(--border);
+  background: none; color: var(--fg); font: inherit; font-size: 15px;
+}
+.palette-input:focus { outline: none; }
+.palette-input::placeholder { color: var(--fg-3); }
+.palette-list { max-height: min(52vh, 420px); overflow: auto; padding: 6px; }
+.palette-group { padding: 9px 10px 4px; font-size: 11px; letter-spacing: .1em; color: var(--fg-3); text-transform: uppercase; }
+.pal-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 10px; border: none; background: none; color: var(--fg);
+  font: inherit; font-size: 13.5px; text-align: left; border-radius: var(--r-sm); cursor: pointer;
+}
+.pal-item .hint { margin-left: auto; color: var(--fg-3); font-size: 12px; }
+.pal-item .pal-sub {
+  color: var(--fg-3); font-size: 11.5px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
+}
+.pal-item kbd { margin-left: auto; }
+.pal-item.active { background: var(--brand-soft); color: var(--brand-ink); }
+.pal-item.active .hint { color: var(--brand-ink); opacity: .8; }
+.pal-item.active .pal-sub { color: var(--brand-ink); opacity: .75; }
+.pal-empty { padding: 26px 16px; text-align: center; color: var(--fg-3); font-size: 13.5px; }
+/* 每组被砍掉的那截：不占焦点、不误导，只提示还有货 */
+.pal-more { padding: 9px 16px 12px; color: var(--fg-3); font-size: 12px; }
+.palette-foot {
+  display: flex; gap: 14px; padding: 9px 14px; border-top: 1px solid var(--border-soft);
+  font-size: 11.5px; color: var(--fg-3);
+}
+kbd {
+  font-family: var(--font-mono); font-size: 11px; padding: 1px 5px;
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px;
+  background: var(--surface-2); color: var(--fg-2);
+}
+
+/* ---------- 骨架屏 ---------- */
+
+.skeleton {
+  background: linear-gradient(100deg, var(--surface-2) 30%, color-mix(in srgb, var(--surface-2) 55%, var(--border)) 50%, var(--surface-2) 70%);
+  background-size: 220% 100%;
+  border-radius: var(--r-sm);
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+.sk-card { border: 1px solid var(--border); border-radius: var(--r-lg); padding: 14px; display: flex; gap: 11px; background: var(--surface); }
+.sk-card .sk-ico { flex: 0 0 36px; width: 36px; height: 36px; border-radius: var(--r-md); }
+.sk-card .sk-lines { flex: 1; display: flex; flex-direction: column; gap: 8px; padding-top: 3px; }
+.sk-card .sk-l1 { height: 13px; width: 62%; }
+.sk-card .sk-l2 { height: 11px; width: 38%; }
+
+/* 进度条：跑起来的时候有一道流动的亮带，说明"还活着" */
+.bar { position: relative; }
+.bar-fill { position: relative; overflow: hidden; }
+.bar-fill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, .45) 50%, transparent 70%);
+  background-size: 200% 100%; animation: shimmer 1.2s linear infinite;
+}
+.bar.done .bar-fill::after { animation: none; background: none; }
+
+/* 数字变化时弹一下，提示"这里变了" */
+.count-pop { animation: count-pop var(--dur-3) var(--ease-spring); display: inline-block; }
+@keyframes count-pop { 50% { transform: scale(1.16); } }
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 1099px) {
+  :root { --side-w: 216px; }
+}
+
+@media (max-width: 767px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar {
+    position: static; height: auto; max-height: none;
+    border-right: none; border-bottom: 1px solid var(--border);
+  }
+  .side-top { padding: var(--sp-3) var(--sp-4) var(--sp-2); }
+  /* 分类/标签默认收起，点「分类」再展开 */
+  .side-scroll { overflow: visible; padding-bottom: 0; display: none; }
+  .sidebar.is-open .side-scroll { display: block; }
+  .side-toggle { display: inline-flex; }
+  .side-foot { border-top: none; padding-top: 0; }
+  .nav { margin-bottom: var(--sp-2); }
+  .main { padding: var(--sp-4) var(--sp-4) 56px; }
+  .page-head, .topbar { align-items: flex-start; flex-direction: column; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+  .page-head-tools { width: 100%; }
+  .search { flex: 1; }
+  .search input { width: 100%; max-width: none; }
+  h1 { font-size: 23px; }
+  .grid { grid-template-columns: 1fr; gap: 10px; }
+
+  /* ---- 手机卡片：单行密排，一屏能多看几条 ----
+     桌面卡片是「图标在上、描述在下」的舒展版；手机上把图标缩一点、描述只留一行，
+     整张卡压成一个可点的横条，手指够得着的面积反而更大。 */
+  .card { border-radius: var(--r-md); }
+  .card-link { gap: 10px; padding: 11px 12px 6px; }
+  .favicon { flex-basis: 30px; width: 30px; height: 30px; border-radius: var(--r-sm); }
+  .favicon img { width: 19px; height: 19px; }
+  .favicon .fallback { font-size: 13px; }
+  .card-title { font-size: 14.5px; line-height: 1.35; }
+  .card-host { font-size: 11.5px; margin-top: 1px; }
+  .card-desc {
+    margin-top: 4px; font-size: 12.5px; line-height: 1.4;
+    -webkit-line-clamp: 1; display: -webkit-box; overflow: hidden;
+  }
+  .card-foot { padding: 0 8px 8px 12px; min-height: 26px; gap: 4px; max-height: 32px; overflow: hidden; }
+  .card-foot .chip { font-size: 11px; padding: 0 7px; }
+
+  /* 触屏上别用 hover 抬升：点完手指抬起来，卡片停在半空会显得没点中 */
+  .card:hover { --lift: 0; box-shadow: none; }
+  .card:hover::before { opacity: 0; }
+  .card:active { transform: scale(.985); transition-duration: var(--dur-1); }
+
+  /* 编辑/更多常驻，thumb 目标至少 36px 高 */
+  .card-foot .edit, .card-foot .more { opacity: 1; padding: 7px 9px; font-size: 16px; min-width: 36px; min-height: 32px; }
+  .card-foot .lock { margin-left: 0; }
+
+  /* 头部：搜索框下拉成整行，按钮排成一行不换行挤成一团 */
+  .page-head-tools { gap: 6px; flex-direction: row-reverse; }
+  .page-head-tools .btn { flex: 0 0 auto; }
+  .search { flex: 1 1 auto; min-width: 0; }
+  .search input { width: 100%; max-width: none; height: 40px; font-size: 16px; /* ≥16px 防止 iOS 聚焦时自动放大 */ }
+  .page-head h1 { font-size: 20px; }
+  /* 小标题 + 数量挤成一行，别占三行 */
+  .page-head-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+  .page-head-text .eyebrow { flex-basis: 100%; }
+  .page-head-text .page-sub { margin: 0; }
+  .topbar .nav a { padding: 8px 10px; }
+
+  /* 收起后的侧栏：配色/账号这两排跟导航无关，手机上藏起来省空间，
+     配色仍可从搜索图标旁的主题按钮切明暗；账号操作留在侧栏展开的「分类」里 */
+  .accents { display: none; }
+
+  /* 分类/标签展开后是一大坨：标签横滑一行，分类行加高方便点 */
+  .tags { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+  .tags::-webkit-scrollbar { display: none; }
+  .tags .tag { flex: none; padding: 5px 10px; }
+  .tree-row { padding-block: 7px; }
+
+  /* 管理表：手机上只留勾选 / 标题 / 操作，标题换行显示别横着溢出 */
+  #bm-table { table-layout: fixed; }
+  #bm-table .cell-url, #bm-table .cell-tags, #bm-table .cell-status,
+  #bm-table .col-icon, #bm-table .cell-cat,
+  #bm-table thead th:nth-child(2), #bm-table thead th:nth-child(4),
+  #bm-table thead th:nth-child(5), #bm-table thead th:nth-child(6),
+  #bm-table thead th:nth-child(7) { display: none; }
+  #bm-table .cell-title { max-width: none; white-space: normal; overflow: visible; }
+  #bm-table .col-check { width: 34px; }
+  #bm-table .col-act { width: 44px; }
+  #bm-table td, #bm-table th { padding: 9px 10px; }
+
+  /* 备份表：一行拆成三行，别让按钮被切掉 */
+  .table-wrap:has(.table.stack) { overflow: visible; }
+  .table.stack thead { display: none; }
+  .table.stack, .table.stack tbody, .table.stack tr, .table.stack td { display: block; width: auto; }
+  .table.stack tr { padding: 12px; border-bottom: 1px solid var(--border-soft); }
+  .table.stack tr:last-child { border-bottom: none; }
+  .table.stack td { padding: 0; border: none; }
+  .table.stack td:first-child { font-weight: 600; word-break: break-all; }
+  .table.stack td:nth-child(2), .table.stack td:nth-child(3) {
+    display: inline-block; margin-top: 4px; font-size: var(--fs-sm); color: var(--fg-2);
+  }
+  .table.stack td:nth-child(3)::before { content: "·"; margin: 0 6px; }
+  .table.stack td:last-child { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .toast-wrap { left: 12px; right: 12px; bottom: 12px; }
+  .toast { max-width: none; }
+}
+
+/* 关掉动效之后，悬浮反馈还剩阴影和描边变色——不靠位移也能看出"这个是可点的" */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .card, .card:hover, .card:focus-within,
+  .card:hover .favicon, .card:focus-within .favicon { transform: none; }
+  .card::before { opacity: 0 !important; }
+  .btn:active, .icon-btn:active { transform: none; }
+  .btn.primary:hover::after { animation: none; }
+}
+
+/* ---------- 登录页 ---------- */
+.login-body {
+  min-height: 100vh; margin: 0;
+  display: grid; place-items: center;
+  background: var(--bg);
+  background-image:
+    radial-gradient(620px 320px at 50% -10%, var(--brand-glow), transparent 70%),
+    radial-gradient(circle at 50% 0%, var(--brand-soft), transparent 55%);
+  padding: var(--sp-5);
+}
+.login-card {
+  width: 100%; max-width: 372px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
+  box-shadow: var(--shadow-2); padding: var(--sp-6) 26px var(--sp-5);
+}
+.login-brand { display: flex; align-items: center; gap: 9px; color: var(--brand-ink); }
+.login-brand h1 { color: var(--fg); font-size: 21px; letter-spacing: -.03em; }
+.login-sub { margin: 6px 0 22px; font-size: 13px; color: var(--fg-2); }
+.login-error {
+  margin-bottom: 14px; padding: 9px 12px; border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, transparent);
+  color: var(--danger); font-size: 13px;
+}
+.login-btn { width: 100%; margin-top: 6px; padding: 10px 14px; }
+.login-back { display: block; text-align: center; margin-top: var(--sp-4); font-size: 13px; color: var(--fg-2); }
+.login-back:hover { color: var(--brand-ink); }

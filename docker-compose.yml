@@ -1,0 +1,17 @@
+services:
+  bookmark-app:
+    build: .
+    image: bookmark-app:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BM_PORT:-8094}:8094"
+    environment:
+      BM_DATA_DIR: /app/data
+      BM_PROXY: "${BM_PROXY:-}"
+      BM_THIRD_PARTY_ICONS: "${BM_THIRD_PARTY_ICONS:-0}"
+      BM_BACKUP_ENABLED: "${BM_BACKUP_ENABLED:-1}"
+      BM_BACKUP_HOUR: "${BM_BACKUP_HOUR:-3}"
+      BM_BACKUP_KEEP: "${BM_BACKUP_KEEP:-14}"
+      TZ: "${TZ:-UTC}"
+    volumes:
+      - ./data:/app/data

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f9f9fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)">
+<title>登录 · {{ app_name }}</title>
+<script>
+// 和 base.html 同一套：登录页也要跟着本机存的主题/配色走，不然从暗色页面点「退出」
+// 会闪一下浅色的登录页。样式表之前定好，首帧就对了。
+(function () {
+  var t;
+  try { t = localStorage.getItem("bm-theme"); } catch (e) {}
+  if (t !== "light" && t !== "dark") {
+    t = (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+  }
+  document.documentElement.dataset.theme = t;
+
+  var a;
+  try { a = localStorage.getItem("bm-accent"); } catch (e) {}
+  if (!/^(indigo|teal|violet|amber)$/.test(a || "")) a = "amber";
+  document.documentElement.dataset.accent = a;
+})();
+</script>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
+<link rel="stylesheet" href="/static/studio.css?v={{ asset_v }}">
+</head>
+<body class="login-body">
+  <form class="login-card" method="post" action="/login">
+    <div class="login-brand">
+      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+        <path fill="currentColor" d="M6 2h12a2 2 0 0 1 2 2v18l-8-5-8 5V4a2 2 0 0 1 2-2z"/>
+      </svg>
+      <h1>{{ app_name }}</h1>
+    </div>
+    <p class="login-sub">登录后查看全部书签，并管理、导入与备份。</p>
+
+    <input type="hidden" name="next" value="{{ next }}">
+
+    {% if error %}
+    <div class="login-error" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <div class="form-row">
+      <label for="username">用户名</label>
+      <input id="username" name="username" value="{{ username }}"
+             autocomplete="username" autofocus required>
+    </div>
+    <div class="form-row">
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password"
+             autocomplete="current-password" required>
+    </div>
+
+    <button class="btn primary login-btn" type="submit">登录</button>
+    <a class="login-back" href="/">继续浏览公开书签</a>
+  </form>
+</body>
+</html>

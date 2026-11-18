@@ -1,0 +1,793 @@
+/* --------------------------------------------------------------
+   流体系统（Fluid）
+   ------------------------------------------------------------
+   在「石英」的静态基底上加一层动的东西：页面背景有缓慢漂移的光团，
+   每张卡片内部有一团跟着指针走的液态光，组件边界会像液面一样轻微形变。
+
+   三条纪律：
+   1. 所有动画只碰 transform / opacity / 已注册的自定义属性；
+      不碰 width/height/top/left，不触发布局。
+   2. 每帧只写"当前指针所在的那一张卡"的变量，由 JS 单 rAF 驱动，
+      整个网格共用一个循环（不是每张卡一个）。
+   3. prefers-reduced-motion 下全部冻结成静态渐变——不能出现"没动效就变丑"。
+   ---------------------------------------------------------- */
+
+:root {
+  /* 流体色：在强调色基础上推导，四套配色自动跟随，不用再各写一遍 */
+  --fluid-1: color-mix(in srgb, var(--brand) 38%, transparent);
+  --fluid-2: color-mix(in srgb, var(--brand) 18%, #22d3ee);
+  --fluid-3: color-mix(in srgb, var(--brand) 26%, #f472b6);
+  --fluid-edge: color-mix(in srgb, var(--brand) 62%, transparent);
+
+  /* 流体速度：慢到几乎察觉不到"在动"，只察觉"活的" */
+  --flow-slow: 34s;
+  --flow-mid: 26s;
+  --flow-fast: 19s;
+
+  /* 粘滞：值越小越"稠"。0.085 在 60fps 下大约 250ms 追上指针 */
+  --viscous: .085;
+  --squish: cubic-bezier(.22, 1.2, .3, 1);
+}
+
+/* ---------- 背景极光（canvas） ---------- */
+
+/* 一块铺满视口的画布。内部按 0.55 缩放渲染，再由 CSS 放大——
+   放大本身就把像素糊开了，所以不用 blur 滤镜（那玩意每帧重算，太贵）。
+   固定定位：滚动时底层不跟着走，页面才有"上下两层"的感觉。 */
+.fluid-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  contain: strict;
+}
+
+#aurora {
+  position: absolute;
+  /* 画布比视口大一圈：光团漂到边缘时不会被硬切 */
+  inset: -8%;
+  width: 116%;
+  height: 116%;
+  display: block;
+  /* 整层不透明度：亮色主题下它只是"白纸上的一点光"；暗色下光才是主角。
+     注意不能写 opacity: light-dark(...) —— light-dark() 只对 <color> 生效，
+     用在 opacity 上整条声明会被丢掉（踩过，表现为"怎么调都不变淡"）。 */
+  opacity: .28;
+  /* 径向蒙版：光收在画面中上部，四周淡出到透明。
+     没有它，光团漂到角落时会把四个角照亮，看起来像"背景色块"而不是"光"。 */
+  -webkit-mask-image: radial-gradient(118% 96% at 52% 34%, #000 34%, rgba(0,0,0,.55) 66%, transparent 100%);
+  mask-image: radial-gradient(118% 96% at 52% 34%, #000 34%, rgba(0,0,0,.55) 66%, transparent 100%);
+}
+
+:root[data-theme="dark"] #aurora { opacity: .75; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #aurora { opacity: .75; }
+}
+
+/* 极细的噪点：把大面积渐变的"数码感"打散，看起来像有质感的水面。
+   内联 SVG，不额外请求；opacity 压到 .02，凑近才看得见。 */
+.fluid-bg .fluid-grain {
+  position: absolute;
+  inset: 0;
+  opacity: .02;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+/* ---------- 点击火花 ---------- */
+
+#spark-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ---------- 卡片流体 ---------- */
+
+/* 卡片内部的两层液态光：
+   .card-fluid 本体是"滞后的那团"（跟得慢，像粘在液体里），
+   ::after 是"即时高光"（跟着指针跑，像液面反光）。
+   两层都压在内容底下（.card-link / .card-foot 的 z-index: 1 已经在拦）。 */
+.card {
+  /* 圆角也跟着指针轻微形变：有机形变靠这两个自定义属性做插值 */
+  border-radius: calc(var(--r-lg) + var(--morph, 0) * 1px);
+  overflow: hidden;
+  transition: transform var(--dur-2) var(--ease-out),
+              box-shadow var(--dur-2) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out),
+              background-color var(--dur-2) var(--ease-out),
+              border-radius var(--dur-3) var(--squish),
+              --rx var(--dur-3) var(--ease-out),
+              --ry var(--dur-3) var(--ease-out);
+}
+
+/* 注册成 <number> 才能被 transition 平滑插值（普通自定义属性是离散的） */
+@property --morph { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --sheen { syntax: "<number>"; inherits: false; initial-value: 0; }
+
+.card-fluid {
+  position: absolute;
+  inset: -8%;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+  /* 五层叠，从下往上：
+     1) 拖尾回声：比主光更慢，指针划过时被拉成一条彗尾
+     2) 阴影晕：光外围一圈极淡的暗，让表面读起来是"鼓起来"的而不是被染了色
+     3) 主光团：滞后跟随
+     4) 镜面点：即时跟随
+     5) 极淡扫光
+     白卡上"纯色光"一定会显脏，所以颜色压到 3~6%，立体感交给第 2 层的阴影晕。 */
+  background:
+    radial-gradient(74px circle at var(--gx, 50%) var(--gy, 0%),
+      color-mix(in srgb, var(--brand) 3%, transparent), transparent 72%),
+    radial-gradient(118px circle at var(--lx, 50%) var(--ly, 0%),
+      transparent 44%,
+      light-dark(rgba(9, 9, 11, .05), rgba(0, 0, 0, .22)) 100%),
+    radial-gradient(52px circle at var(--lx, 50%) var(--ly, 0%),
+      color-mix(in srgb, var(--brand) 6%, transparent), transparent 70%),
+    radial-gradient(26px circle at var(--mx, 50%) var(--my, 0%),
+      light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .1)), transparent 76%),
+    linear-gradient(calc(105deg + var(--sheen) * 40deg),
+      transparent 34%,
+      color-mix(in srgb, var(--brand) 2.5%, transparent) 50%,
+      transparent 66%);
+  background-blend-mode: normal, normal, screen, normal, normal;
+}
+
+.card:hover .card-fluid,
+.card:focus-within .card-fluid { opacity: 1; }
+
+/* 静息态的"液态质感"：两团固定的柔光（左上暖、右下冷），
+   外加一个 12 秒的呼吸——只动 opacity，走合成层，不重绘不重排。
+   每张卡的动画相位按 --i 错开，整页看过去像水面在不同位置起伏，
+   而不是所有卡一起闪。这是"每个书签都有流体感"的底子；
+   指针跟到哪，上面那层才会被点亮。 */
+.card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  /* 静息液光：亮色下是"极淡的染色"（3~4%），暗色下必须更浓（12%）
+     才看得见——深底上加一点点色光等于没加。light-dark() 直接按 color-scheme 取值，
+     手动切主题（data-theme）也能跟上，不用写两套规则。 */
+  background:
+    radial-gradient(130% 100% at 6% 0%,
+      light-dark(color-mix(in srgb, var(--brand) 3%, transparent),
+                color-mix(in srgb, var(--brand) 13%, transparent)), transparent 54%),
+    radial-gradient(100% 85% at 100% 104%,
+      light-dark(color-mix(in srgb, var(--fluid-2) 4%, transparent),
+                color-mix(in srgb, var(--fluid-2) 12%, transparent)), transparent 56%);
+  animation: liquid-breathe 12s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i, 0) * -.85s);
+}
+@keyframes liquid-breathe {
+  from { opacity: .32; }
+  to { opacity: .62; }
+}
+
+/* 悬停进场那一下，一道宽光斜掠过整张卡（一次性，不循环）。
+   放在 .card-fluid 的伪元素上，不占卡片自己的 ::before/::after。 */
+.card-fluid::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(102deg,
+    transparent 36%,
+    light-dark(rgba(255, 255, 255, .75), rgba(255, 255, 255, .13)) 50%,
+    transparent 64%);
+  transform: translateX(-115%);
+}
+.card:hover .card-fluid::after {
+  animation: card-glare 900ms var(--ease-out) 40ms;
+}
+@keyframes card-glare {
+  0%   { transform: translateX(-115%); opacity: 0; }
+  18%  { opacity: 1; }
+  100% { transform: translateX(115%); opacity: 0; }
+}
+
+/* 页头入场：眉标、标题、副标题依次浮起；只在首次加载播一次 */
+.page-head .eyebrow,
+.page-head h1,
+.page-head .page-sub {
+  animation: head-in 700ms var(--ease-out) backwards;
+}
+.page-head .eyebrow { animation-delay: 40ms; }
+.page-head h1 { animation-delay: 100ms; }
+.page-head .page-sub { animation-delay: 170ms; }
+@keyframes head-in {
+  from { opacity: 0; transform: translateY(10px); filter: blur(6px); }
+}
+
+/* 液态的"边缘张力"——这是让卡片像液体而不是像聚光灯的关键：
+   沿卡片边缘打一道弧光，弧心朝向指针，模拟液面在容器边上被拉起来的高光。
+   做法：conic-gradient 只画一段亮弧，再用 mask 只留 1px 边框那一圈。
+   旧的 420px 径向光斑在这里被整体替换（同一个 ::before），避免两层一起发亮。 */
+@property --a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+  background: conic-gradient(from var(--a, 0deg),
+    transparent 0deg 26deg,
+    color-mix(in srgb, var(--brand) 80%, transparent) 60deg,
+    color-mix(in srgb, var(--brand) 30%, transparent) 104deg,
+    transparent 152deg 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+.card:hover::before,
+.card:focus-within::before { opacity: .95; }
+
+/* 有机形变：悬停时圆角从 12px 走到 15px，按下时再涨——边界像被液体顶起来 */
+.card:hover, .card:focus-within { --morph: 3; }
+.card:active { --morph: 6; }
+
+/* 入场交给 JS 的滚动揭示（.rv-armed → .is-rv），这里只留拖拽状态 */
+.card.dragging {
+  border-radius: calc(var(--r-lg) + 6px);
+  overflow: visible;
+}
+
+/* ---------- 滚动揭示 ---------- */
+
+/* JS 先在卡片上加 .rv-armed（隐藏），进入视口后换成 .is-rv 播动画。
+   顺序反过来设计是为了容错：JS 挂了，卡片只会保持可见，不会永久隐身。 */
+.rv-armed { opacity: 0; }
+
+.card.is-rv {
+  /* backwards 而不是 both：动画结束后不保留任何动画状态，合成层可以释放 */
+  animation: reveal-up 640ms var(--ease-out) backwards;
+  animation-delay: var(--rv-d, 0ms);
+}
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(.982);
+    filter: blur(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* ---------- 按钮：磁性 + 入点灌注 ---------- */
+/*
+  参照 snapblocks 的 Magnetic Button：
+  1. 指针还没碰到，按钮就已经被"吸"过来（--pull-x/y 由 JS 的弹簧写）；
+  2. 标签比本体多走 0.7 倍，读起来像有厚度；
+  3. 进入时从指针那一点开始灌注，离开时朝离开点退回去（clip-path 圆）。
+
+  这三件事都不改布局：位移走 transform，灌注走 clip-path，
+  两者都由已注册的自定义属性驱动，所以能平滑插值。
+*/
+
+@property --fill-r {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
+.btn {
+  border-radius: calc(var(--r-md) + var(--morph, 0) * 1px);
+  overflow: hidden;
+  isolation: isolate;
+  /* 磁性位移 + 按键抬落：弹簧每帧写 --pull-x/y，材质层写 --lift-y，这里只负责消费。
+     两个变量分开是因为 --pull 由 JS 逐帧写、--lift 由 CSS 状态写，混在一起会互相打架。 */
+  transform: translate3d(var(--pull-x, 0px), calc(var(--pull-y, 0px) + var(--lift-y, 0px)), 0)
+             scale(var(--press, 1));
+  transition: background-color var(--dur-2) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out),
+              color var(--dur-2) var(--ease-out),
+              transform var(--dur-2) var(--squish),
+              border-radius var(--dur-3) var(--squish),
+              box-shadow var(--dur-2) var(--ease-out);
+}
+
+/* 灌注层：一个从 --fx/--fy 扩散的圆。--fill-r 是注册过的 <percentage>，
+   所以"扩散"能靠 transition 平滑完成，不用每帧 JS。 */
+.btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  background: var(--flood, color-mix(in srgb, var(--surface-2) 88%, var(--brand)));
+  clip-path: circle(var(--fill-r) at var(--fx, 50%) var(--fy, 50%));
+  transition: --fill-r 520ms var(--squish);
+}
+.btn.is-flood::before { --fill-r: 150%; }
+
+/* 主按钮：灌注的是"一点品牌色的墨渍"，不是整块换成品牌色。
+   品牌色在这里只出 26%，和黑色的底混成深靛；整块填品牌色会破坏
+   「强调色只喊一处」的规矩——主按钮的底色始终是那块墨。 */
+.btn.primary { --flood: color-mix(in srgb, var(--brand) 26%, transparent); }
+
+/* 暗色下主按钮是"白墨钉"：玻璃层已经把白底压到 70% 半透，指针亮光再叠上去
+   就整块发白、糊成一块奶白（实测 .62 底色 + .17 白光）。这里把暗色的玻璃压回接近实心，
+   镜面也收窄收淡，保留"擦了一下"的感觉，不再抢字。 */
+:root[data-theme="dark"] .btn:not(.primary):not(.ghost):not(.danger):not(.sm) {
+  background-color: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+:root[data-theme="dark"] .btn.primary {
+  background-color: color-mix(in srgb, var(--fg) 96%, var(--brand));
+}
+
+/* 主按钮的指针镜面在 app.css：一条随指针转向的窄薄反光（--spec-a / --spec）。
+   这里补的是"底边镶边的一圈弧光"：它同样以指针为圆心（--fx/--fy，JS 每帧更新），
+   从指针那一点沿着底边散开。墨钉的镶边因此不是一条死色带，而是被指针擦亮的一段。 */
+.btn.primary::before {
+  background:
+    radial-gradient(60% 130% at var(--fx, 50%) 100%,
+      transparent 40%,
+      color-mix(in srgb, var(--stud-hot, var(--brand)) 80%, transparent) 78%,
+      transparent 100%);
+}
+
+/* 标签差速位移：JS 不包 span 也能做——这里只认 .btn-lb（由 JS 自动包一层） */
+.btn-lb {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transform: translate3d(var(--pull-lx, 0px), var(--pull-ly, 0px), 0);
+  transition: transform var(--dur-2) var(--squish);
+}
+
+/* 按下：压扁一点 + 圆角变大，像水滴被按在玻璃上 */
+.btn:active {
+  --morph: 3;
+  --press: .965;
+  transform: translate3d(var(--pull-x, 0px), calc(var(--pull-y, 0px) + var(--lift-y, 0px)), 0)
+             scale(var(--press, 1));
+}
+/* 主按钮按下时镶边收平、整体落回 1px（--lift-y 由 app.css 给），
+   所以"被按下去"这件事是看得到位移的，不只是变色。 */
+.btn.primary:active { --morph: 3; }
+
+/* ---------- 按钮材质 ---------- */
+/*
+  四类按钮各有一"层材料"，不再只是描边+底色：
+    primary  墨色实心 + 指针镜面 + 一道绕边走的光束（Beam Button）
+    次级      液态玻璃 + 虹彩 + 粉笔描边（Chalk Glass）
+    danger   红字 + 烧灼底边（Burn Edge）
+    icon     悬停时从边缘扩一圈光环（Glow Ring）
+  都只用 transform / opacity / 已注册属性，悬停才点亮。
+*/
+
+@property --beam { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+
+/* 主按钮的绕边光束：conic-gradient 只画一段亮弧，mask 收成 1px 边框，整体旋转 */
+.btn.primary::after {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+  background: conic-gradient(from var(--beam),
+    transparent 0deg 54deg,
+    rgba(255, 255, 255, .95) 76deg,
+    color-mix(in srgb, var(--brand) 85%, #ffffff) 96deg,
+    transparent 122deg 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: beam-spin 2.6s linear infinite;
+}
+.btn.primary:hover::after,
+.btn.primary:focus-visible::after { opacity: 1; }
+@keyframes beam-spin { to { --beam: 360deg; } }
+
+/* 次级按钮：液态玻璃。半透 + 背景模糊 + 上亮下暗的内高光，像一块薄玻璃片。
+   那道"上亮下暗"是关键：只加描边会像普通的 outlined button，
+   加了这道厚度，它才像一块有边缘的实体。
+
+   这轮在玻璃上再压一条「珍珠流光」：一道和主按钮同角度（--spec-a）的虹彩，
+   颜色由品牌色和青/粉混出来（fluid-1/2/3），所以四套配色自动跟着变。
+   静息几乎看不见，悬停时顺着指针方向扫进来——玻璃片被光擦了一下。 */
+.btn:not(.primary):not(.ghost):not(.danger):not(.sm) {
+  background-color: color-mix(in srgb, var(--surface) 62%, transparent);
+  background-image:
+    linear-gradient(var(--spec-a, 90deg),
+      transparent 26%,
+      color-mix(in srgb, var(--fluid-2) 26%, transparent) 44%,
+      color-mix(in srgb, var(--fluid-3) 22%, transparent) 50%,
+      color-mix(in srgb, var(--fluid-1) 30%, transparent) 56%,
+      transparent 74%),
+    linear-gradient(to bottom,
+      light-dark(rgba(255,255,255,.7), rgba(255,255,255,.05)),
+      transparent 52%);
+  backdrop-filter: blur(10px) saturate(1.35);
+  -webkit-backdrop-filter: blur(10px) saturate(1.35);
+  box-shadow:
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .07)),
+    inset 0 -1px 0 light-dark(rgba(9, 9, 11, .04), rgba(0, 0, 0, .3)),
+    var(--shadow-1);
+}
+/* 玻璃片在悬停时把边框提亮，虹彩也浓一档 */
+.btn:not(.primary):not(.ghost):not(.danger):not(.sm):hover {
+  background-color: color-mix(in srgb, var(--surface) 82%, transparent);
+  background-image:
+    linear-gradient(var(--spec-a, 90deg),
+      transparent 20%,
+      color-mix(in srgb, var(--fluid-2) 52%, transparent) 42%,
+      color-mix(in srgb, var(--fluid-3) 44%, transparent) 50%,
+      color-mix(in srgb, var(--fluid-1) 58%, transparent) 58%,
+      transparent 80%),
+    linear-gradient(to bottom,
+      light-dark(rgba(255,255,255,.7), rgba(255,255,255,.05)),
+      transparent 52%);
+  box-shadow:
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, .95), rgba(255, 255, 255, .1)),
+    inset 0 -1px 0 light-dark(rgba(9, 9, 11, .04), rgba(0, 0, 0, .3)),
+    var(--shadow-1);
+}
+
+/* 危险按钮：不整块染红——红色只出现在文字、描边和一条"烧灼"的底边。
+   悬停时底边亮一档，读起来像提醒，而不是另一个主按钮在抢注意力。 */
+.btn.danger {
+  box-shadow:
+    inset 0 -1px 0 color-mix(in srgb, var(--danger) 28%, transparent),
+    var(--shadow-1);
+}
+.btn.danger:hover {
+  box-shadow:
+    inset 0 -2px 0 color-mix(in srgb, var(--danger) 55%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--danger) 14%, transparent),
+    var(--shadow-1);
+}
+
+/* ---------- 次级按钮：粉笔描边 ---------- */
+/*
+  见 app.js 的 initChalk：悬停时边框沿着指针进入的那条边"擦"出来。
+
+  ::after 先用 conic 渐变画出带缺口的粉笔线，再用 mask 只留 1px 边框；
+  然后 clip-path 从指针所在的那条边向对边推进（--fc-t/r/b/l 是四条边的起始裁剪量）。
+  指针离开时 class 撤掉，clip 位置瞬时归位为初始状态，不在页面上留动画尾巴。
+
+  粉笔的缺口不是写死的图案，是把 --fc-seed（由进入点算出的相位）套在同一套
+  conic 模版上——所以每个按钮每次画出的虚线都不一样，而 DOM 和 CSS 都不用变。
+*/
+
+.btn:not(.primary):not(.ghost):not(.danger):not(.sm):not(.choice) {
+  --fc-t: 0%;
+  --fc-r: 0%;
+  --fc-b: 0%;
+  --fc-l: 100%;
+}
+
+.btn:not(.primary):not(.ghost):not(.danger):not(.sm):not(.choice)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  z-index: 2;
+  background: conic-gradient(from var(--fc-seed, 0deg),
+    var(--chalk, var(--fg)) 0deg 3deg,
+    transparent 3deg 9deg,
+    var(--chalk, var(--fg)) 9deg 21deg,
+    transparent 21deg 27deg,
+    var(--chalk-soft, var(--chalk, var(--fg))) 27deg 48deg,
+    transparent 48deg 53deg,
+    var(--chalk, var(--fg)) 53deg 71deg,
+    transparent 71deg 79deg,
+    var(--chalk, var(--fg)) 79deg 104deg,
+    transparent 104deg 112deg,
+    var(--chalk-soft, var(--chalk, var(--fg))) 112deg 137deg,
+    transparent 137deg 143deg,
+    var(--chalk, var(--fg)) 143deg 164deg,
+    transparent 164deg 171deg,
+    var(--chalk, var(--fg)) 171deg 196deg,
+    transparent 196deg 204deg,
+    var(--chalk-soft, var(--chalk, var(--fg))) 204deg 226deg,
+    transparent 226deg 233deg,
+    var(--chalk, var(--fg)) 233deg 251deg,
+    transparent 251deg 259deg,
+    var(--chalk, var(--fg)) 259deg 284deg,
+    transparent 284deg 292deg,
+    var(--chalk-soft, var(--chalk, var(--fg))) 292deg 317deg,
+    transparent 317deg 323deg,
+    var(--chalk, var(--fg)) 323deg 344deg,
+    transparent 344deg 351deg,
+    var(--chalk, var(--fg)) 351deg 360deg);
+  /* 只留 1px 的边：两层 mask 相减，内容区被挖空 */
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  /* 初始裁剪：整个边框藏在进入边之外；--fc-* 由 JS 在 pointerenter 时按最近边写 */
+  clip-path: inset(var(--fc-t) var(--fc-r) var(--fc-b) var(--fc-l));
+  opacity: 0;
+}
+
+/* 擦出来：四条边全部放开，clip-path 从进入边过渡到完整框 */
+.btn:not(.primary):not(.ghost):not(.danger):not(.sm):not(.choice).is-chalk::after {
+  clip-path: inset(0 0 0 0);
+  opacity: 1;
+  transition: clip-path 380ms var(--ease-out), opacity 90ms linear;
+}
+
+/* 粉笔的颜色：亮色下是墨，暗色下是白——不是另一块底，只是边框的另一种画法 */
+.btn:not(.primary):not(.ghost):not(.danger):not(.sm):not(.choice) {
+  --chalk: color-mix(in srgb, var(--fg) 52%, transparent);
+  --chalk-soft: color-mix(in srgb, var(--fg) 26%, transparent);
+}
+:root[data-theme="dark"] .btn:not(.primary):not(.ghost):not(.danger):not(.sm):not(.choice) {
+  --chalk: color-mix(in srgb, var(--fg) 62%, transparent);
+  --chalk-soft: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+
+/* 图标按钮：悬停时从边缘扩一圈光环 + 同样的磁性吸附。
+   这两类按钮原来也进了 initMagnetic 的名单，但没有人消费 --pull-x/y；
+   补上 transform 之后，它们才真正被指针"吸"过去。按下时保留缩放。 */
+.icon-btn, .icon-toggle {
+  position: relative;
+  isolation: isolate;
+  transform: translate3d(var(--pull-x, 0px), var(--pull-y, 0px), 0);
+}
+.icon-btn:active {
+  transform: translate3d(var(--pull-x, 0px), var(--pull-y, 0px), 0) scale(.88);
+}
+.icon-toggle:active {
+  transform: translate3d(var(--pull-x, 0px), var(--pull-y, 0px), 0) scale(.9);
+}
+.icon-btn::after, .icon-toggle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 45%, transparent),
+              0 0 14px -2px var(--brand-glow);
+  transform: scale(.82);
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--squish);
+}
+.icon-btn:hover::after, .icon-toggle:hover::after {
+  opacity: 1;
+  transform: scale(1);
+}
+/* 悬停时图标本身也"活"一下：线稿按品牌色描边画出来，再带一点同色的外发光。
+   比单纯变色更像屏幕上的一个信号灯被点亮。 */
+.icon-toggle:hover svg { filter: drop-shadow(0 0 4px var(--fluid-1)); }
+.icon-btn:hover svg { filter: drop-shadow(0 0 3px var(--fluid-1)); }
+
+/* ---------- 输入 / 搜索：水面 ---------- */
+
+.search input,
+.form-row input, .form-row textarea, .form-row select {
+  border-radius: calc(var(--r-md) + var(--morph, 0) * 1px);
+  transition: border-color var(--dur-2) var(--ease-out),
+              box-shadow var(--dur-2) var(--ease-out),
+              background-color var(--dur-2) var(--ease-out),
+              border-radius var(--dur-3) var(--squish);
+}
+/* 主按钮的背景里有一层跟着指针转向的镜面（--spec-a）。它的角度和亮度都是
+   未注册的自定义属性，指针每动一下只能"跳"到新值——所以给背景图挂一条
+   极短的过渡，让跳变软化成一道滑过去的反光，而不是指针一动光就瞬移。 */
+.btn.primary {
+  transition: background-color var(--dur-2) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out),
+              color var(--dur-2) var(--ease-out),
+              transform var(--dur-2) var(--squish),
+              border-radius var(--dur-3) var(--squish),
+              box-shadow var(--dur-2) var(--ease-out),
+              background-image var(--dur-1) var(--ease-out);
+}
+/* 聚焦时边框软化成一个椭圆环，像水面被点了一下 */
+.search input:focus,
+.form-row input:focus, .form-row textarea:focus, .form-row select:focus {
+  --morph: 4;
+  box-shadow: 0 0 0 3px var(--brand-glow), 0 0 22px -8px var(--brand-glow);
+}
+
+/* ---------- 侧栏与导航：液面滑动 ---------- */
+
+/* 分类行/标签/导航的激活底，改成"从左渗出来"的渐变，而不是硬切一块色块 */
+.tree-row, .nav a, .tag {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.tree-row::before, .nav a::before, .tag::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  opacity: 0;
+  transform: scaleX(.35);
+  transform-origin: left center;
+  background: radial-gradient(120% 160% at 0% 50%, var(--brand-soft), transparent 72%);
+  transition: opacity var(--dur-2) var(--ease-out),
+              transform var(--dur-3) var(--ease-out);
+}
+.tree-row:hover::before, .nav a:hover::before, .tag:hover::before {
+  opacity: .9;
+  transform: scaleX(1);
+}
+/* 激活项：底已在上面，这里加一道流动的左侧高光 */
+.tree-row.is-active {
+  box-shadow: inset 2px 0 0 var(--brand), inset 0 0 18px -10px var(--brand-glow);
+}
+
+/* 导航激活滑块加一点"液面张力"：圆角比槽更圆 */
+.nav a.is-active { border-radius: 8px; }
+
+/* ---------- 表格行：涟漪 ---------- */
+
+tbody tr {
+  position: relative;
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+tbody tr:hover { background-color: color-mix(in srgb, var(--brand-soft) 55%, transparent); }
+
+/* ---------- 弹层：液体浮起 ---------- */
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(.97);
+    filter: blur(4px);
+  }
+}
+.modal, .menu, .toast, .palette-box {
+  /* 用弹性缓动 + 轻微形变，像液滴从液面浮起来 */
+  animation-timing-function: var(--squish);
+}
+.modal { border-radius: var(--r-xl); }
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px) scale(.95);
+    filter: blur(3px);
+  }
+}
+@keyframes menu-in {
+  from { opacity: 0; transform: scale(.92); filter: blur(3px); }
+}
+
+/* 命令面板：整块像一个被拉开的液面 */
+.palette-box {
+  border-radius: calc(var(--r-xl) + 2px);
+  transition: border-radius var(--dur-3) var(--squish);
+}
+
+/* ---------- 图标托：液体包裹 ---------- */
+
+/* 悬停时图标托先"吸一口气"再放大，比线性缩放更像有表面张力 */
+.favicon {
+  transition: transform var(--dur-3) var(--squish),
+              border-radius var(--dur-3) var(--squish),
+              box-shadow var(--dur-2) var(--ease-out);
+}
+.card:hover .favicon {
+  transform: scale(1.07);
+  border-radius: 13px;
+  box-shadow: inset 0 0 0 1px var(--border-soft), 0 0 18px -8px var(--brand-glow);
+}
+
+/* ---------- 滚动条：液滴 ---------- */
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+
+/* ---------- 登录页 ---------- */
+
+/* 登录页用同一块极光画布：给页面挂一个同 id 的容器即可（模板里已有 #aurora）。
+   卡片是"液态玻璃"——半透 + 背景模糊，背后的光会透出来。 */
+.login-card {
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  backdrop-filter: saturate(1.4) blur(20px);
+  -webkit-backdrop-filter: saturate(1.4) blur(20px);
+  border-color: color-mix(in srgb, var(--border-strong) 70%, transparent);
+  /* 顶部一道内高光，模拟玻璃边缘的厚度 */
+  box-shadow: var(--shadow-2),
+              inset 0 1px 0 light-dark(rgba(255, 255, 255, .85), rgba(255, 255, 255, .06));
+  animation: card-glass-in 720ms var(--ease-out) backwards;
+}
+@keyframes card-glass-in {
+  from { opacity: 0; transform: translateY(14px) scale(.97); backdrop-filter: blur(0px); }
+}
+
+/* ---------- 降级 ---------- */
+
+/* 触摸屏：没有指针跟随，静息那层已经是可见的，这里只把幅度收小，
+   并把背景光团放慢——省电，但页面仍然是"活的"。 */
+@media (hover: none) {
+  .card-fluid { opacity: .38; }
+  .fluid-bg i { animation-duration: 60s; }
+}
+
+/* 减少动效：全部冻结在好看的静态状态，不是关掉就变白 */
+@media (prefers-reduced-motion: reduce) {
+  .fluid-bg i,
+  .login-body::before { animation: none !important; transform: none !important; }
+  /* 静息呼吸停在中位，卡片保持有质感但不脉动 */
+  .card::after { animation: none !important; opacity: .6; }
+  .card-fluid, .btn::before, .tree-row::before, .nav a::before, .tag::before {
+    transition: none !important;
+  }
+  .card-fluid { opacity: .4; }
+  .card, .btn, .search input, .form-row input, .form-row textarea, .form-row select, .favicon {
+    transition-duration: 1ms !important;
+  }
+  .card:hover, .card:focus-within { --lift: 0; }
+  @keyframes card-in { from { opacity: 0; } }
+}
+
+/* ---------- 磁石开关：液滴被磁化的那一下 ---------- */
+/*
+  点击时液滴要"被磁铁咬住"：表面炸出一圈尖刺（Rosensweig 不稳定性），
+  本体被拉成水滴形。尖刺用 conic-gradient 的锯齿环做，靠 mask 只留外沿一环，
+  再用一段呼吸动画让长短不定——比画固定多边形更像流体。
+  常态不挂（opacity 0），只有 JS 加上 .is-charging 的那 900ms 里存在。
+*/
+.lode-drop::after {
+  content: "";
+  position: absolute; inset: 0; border-radius: 50%;
+  pointer-events: none; opacity: 0;
+  background: repeating-conic-gradient(from 0deg,
+    #0b0b0f 0deg 7deg,
+    color-mix(in srgb, var(--brand) 70%, #0b0b0f) 7deg 9deg,
+    transparent 9deg 22.5deg);
+  /* 内圈挖空，只留 50%-82% 这一环，尖刺从液滴表面长出去；
+     超出胶囊轨道的部分被 overflow 裁掉，正好是"磁流体被压在沟槽里" */
+  -webkit-mask: radial-gradient(circle, transparent 40%, #000 50%, #000 82%, transparent 96%);
+  mask: radial-gradient(circle, transparent 40%, #000 50%, #000 82%, transparent 96%);
+  transform: scale(.35) rotate(0deg);
+  transition: opacity 260ms var(--ease-out), transform 420ms var(--ease-out);
+}
+.theme-toggle.lode.is-charging .lode-drop::after {
+  opacity: 1;
+  transform: scale(1.05) rotate(22deg);
+  animation: spike-breathe 620ms var(--ease-in-out) infinite alternate;
+}
+@keyframes spike-breathe {
+  from { transform: scale(.96) rotate(22deg); }
+  to   { transform: scale(1.12) rotate(40deg); }
+}
+/* 甩尾：移动中被拉成水滴形，方向朝滑动的一侧 */
+.theme-toggle.lode.is-charging .lode-drop {
+  border-radius: 64% 40% 40% 64% / 50% 50% 50% 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle.lode.is-charging .lode-drop::after { animation: none; opacity: .8; }
+}

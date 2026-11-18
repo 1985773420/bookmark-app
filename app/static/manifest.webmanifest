@@ -1,0 +1,18 @@
+{
+  "name": "书签库",
+  "short_name": "书签库",
+  "description": "自研书签管理：域名清单导入、分类树、标签、备份与图标抓取",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "id": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f9f9fb",
+  "theme_color": "#3e63dd",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

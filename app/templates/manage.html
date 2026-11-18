@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}管理 · 书签库{% endblock %}
+
+{% block content %}
+<header class="topbar">
+  <div class="topbar-title">
+    <h1>书签管理</h1>
+    <span class="muted">{{ bookmarks|length }} 条</span>
+  </div>
+  <div class="topbar-tools">
+    <form class="search" method="get" action="/manage">
+      {% if category_id != 'all' %}<input type="hidden" name="category_id" value="{{ category_id }}">{% endif %}
+      <svg class="search-ico" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <input type="search" name="q" value="{{ q }}" placeholder="搜索标题 / 域名 / 描述" aria-label="搜索书签">
+    </form>
+    <button class="btn" id="btn-refresh">刷新元数据</button>
+    <button class="btn primary" id="btn-new">新增书签</button>
+  </div>
+</header>
+
+<div class="bulkbar" id="bulkbar" hidden>
+  已选 <b id="bulk-count">0</b> 条
+  <button class="btn sm" data-bulk="lan_clear">只留外网</button>
+  <button class="btn sm" data-bulk="tag_add">加标签</button>
+  <button class="btn sm" data-bulk="tag_remove">去标签</button>
+  <button class="btn sm" data-bulk="move">移动到分类</button>
+  <button class="btn sm" data-bulk="private">设为私有</button>
+  <button class="btn sm" data-bulk="public">设为公开</button>
+  <button class="btn sm danger" data-bulk="delete">删除</button>
+</div>
+
+<div class="table-wrap">
+<table class="table" id="bm-table">
+  <thead>
+    <tr>
+      <th class="col-check"><input type="checkbox" id="check-all"></th>
+      <th class="col-icon"></th>
+      <th>标题</th>
+      <th>网址</th>
+      <th>分类</th>
+      <th>标签</th>
+      <th>状态</th>
+      <th class="col-act"></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for b in bookmarks %}
+    <tr data-id="{{ b.id }}">
+      <td><input type="checkbox" class="row-check" value="{{ b.id }}"></td>
+      <td class="col-icon">
+        {% if b.favicon_path %}<img src="/icons/{{ b.favicon_path }}" alt="" loading="lazy">
+        {% else %}<span class="fallback sm" style="background:{{ b.domain|hue }}">{{ (b.title or b.domain)[0] }}</span>{% endif %}
+      </td>
+      <td class="cell-title" title="{{ b.title or '' }}">
+        {% if b.is_private %}<span class="lock" title="私有书签"><svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M7 10V7a5 5 0 0 1 10 0v3h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h1zm2 0h6V7a3 3 0 0 0-6 0v3z"/></svg></span>{% endif %}{{ display_title(b) or b.domain }}
+      </td>
+      <td class="cell-url">
+        <a href="{{ b.url }}" target="_blank" rel="noopener">{{ b.url|truncate(60) }}</a>
+        {% if b.url_lan %}<span class="lan-hint" title="{{ b.url_lan }}">内网：{{ b.url_lan|truncate(40) }}</span>{% endif %}
+      </td>
+      <td class="cell-cat">{{ b.category.name if b.category else '未分类' }}</td>
+      <td class="cell-tags">{% for t in b.tags %}<span class="chip">{{ t.name }}</span>{% endfor %}</td>
+      <td class="cell-status">
+        {% if b.status_code %}<span class="dot {{ 'ok' if b.status_code < 400 else 'bad' }}"></span>{{ b.status_code }}
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td class="col-act"><button class="icon-btn edit" data-id="{{ b.id }}" title="编辑"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L20 8a2.83 2.83 0 0 0-4-4L4 16v4Z"/><path d="m14.6 5.4 4 4"/></svg></button></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if not bookmarks %}<div class="empty"><p>没有匹配的书签。</p></div>{% endif %}
+
+<datalist id="cat-list">
+  {% for c, d in flat_categories %}<option value="{{ c.name }}">{{ '　' * d }}{{ c.name }}</option>{% endfor %}
+</datalist>
+{% endblock %}

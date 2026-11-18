@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f9f9fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111113" media="(prefers-color-scheme: dark)">
+<title>{% block title %}书签库{% endblock %}</title>
+<script>
+// 主题和配色都必须在样式表生效前定下来，否则按了暗色/换了配色的人会先看见一帧旧色。
+// 只认确定值：系统偏好只在第一次访问时读一次，之后一律听 localStorage 的。
+(function () {
+  var t;
+  try { t = localStorage.getItem("bm-theme"); } catch (e) {}
+  if (t !== "light" && t !== "dark") {
+    t = (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+  }
+  document.documentElement.dataset.theme = t;
+
+  var a;
+  try { a = localStorage.getItem("bm-accent"); } catch (e) {}
+  if (!/^(indigo|teal|violet|amber)$/.test(a || "")) a = "amber";
+  document.documentElement.dataset.accent = a;
+})();
+</script>
+<link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
+<link rel="stylesheet" href="/static/studio.css?v={{ asset_v }}">
+<link rel="icon" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+</head>
+<body>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
+<div class="shell{{ ' is-anon' if anonymous }}">
+  <aside class="sidebar">
+    <div class="side-top">
+      <a class="brand" href="/">
+        <svg class="brand-mark" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path fill="currentColor" d="M6 2h12a2 2 0 0 1 2 2v18l-8-5-8 5V4a2 2 0 0 1 2-2z"/>
+        </svg>
+        <span class="brand-name">{{ app_name }}</span>
+      </a>
+      <div class="side-top-acts">
+        <button class="icon-toggle" id="btn-palette" type="button" aria-label="命令面板（⌘K）" title="命令面板 ⌘K">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/>
+            <path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+        {# 磁石开关（Lodestone 风格）：收起时是一颗磁流体小球，悬停/聚焦才展开成
+           一条沟槽，液滴滑到另一端并爆出磁力尖刺。结构上的每一层都有活儿：
+           .lode-pit（内凹沟槽）/.lode-sun/.lode-moon（两端刻度）/.lode-a,.lode-b（渗出的液珠）
+           / .lode-drop（液滴本体，::before 是硬高光，::after 是磁力尖刺）。 #}
+        <button class="icon-toggle theme-toggle lode" id="theme-toggle" type="button"
+                aria-label="切换深浅色" title="切换深浅色">
+          <span class="lode-pit"></span>
+          <span class="lode-sun" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="12" cy="12" r="4.2" fill="currentColor" stroke="none"/>
+              <path d="M12 2.6v2.1M12 19.3v2.1M2.6 12h2.1M19.3 12h2.1M5.4 5.4l1.5 1.5M17.1 17.1l1.5 1.5M18.6 5.4l-1.5 1.5M6.9 17.1l-1.5 1.5"/>
+            </svg>
+          </span>
+          <span class="lode-moon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="12" height="12">
+              <path fill="currentColor" d="M20.7 14.6A8.6 8.6 0 0 1 9.4 3.3a8.8 8.8 0 1 0 11.3 11.3z"/>
+            </svg>
+          </span>
+          {# 收起态只留一个图标：亮色下是月牙（点我去暗色），暗色下是太阳（点我回亮色）。
+             两颗球/槽本身不表达状态，图标才是"下一步会变成什么"。 #}
+          <span class="lode-idle" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="13" height="13">
+              <path fill="currentColor" d="M20.7 14.6A8.6 8.6 0 0 1 9.4 3.3a8.8 8.8 0 1 0 11.3 11.3z"/>
+            </svg>
+          </span>
+          <span class="lode-idle-sun" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="12" cy="12" r="4.2" fill="currentColor" stroke="none"/>
+              <path d="M12 2.6v2.1M12 19.3v2.1M2.6 12h2.1M19.3 12h2.1M5.4 5.4l1.5 1.5M17.1 17.1l1.5 1.5M18.6 5.4l-1.5 1.5M6.9 17.1l-1.5 1.5"/>
+            </svg>
+          </span>
+          <span class="lode-a" aria-hidden="true"></span>
+          <span class="lode-b" aria-hidden="true"></span>
+          <span class="lode-drop" aria-hidden="true"></span>
+        </button>
+        <button class="side-toggle" id="side-toggle" type="button"
+                aria-controls="side-panel" aria-expanded="false">
+          <span>分类</span><span class="caret" aria-hidden="true">▼</span>
+        </button>
+        {% if anonymous %}
+          <a class="btn sm primary side-login" href="/login">登录</a>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if not anonymous %}
+    <nav class="nav">
+      <a href="/" class="{{ 'is-active' if active == 'nav' }}">导航</a>
+      <a href="/manage" class="{{ 'is-active' if active == 'manage' }}">管理</a>
+      <a href="/import" class="{{ 'is-active' if active == 'import' }}">导入</a>
+      <a href="/backup" class="{{ 'is-active' if active == 'backup' }}">备份</a>
+    </nav>
+    {% endif %}
+
+    <div class="side-scroll" id="side-panel">
+      <div class="tree-head">
+        <span>分类</span>
+        {% if not anonymous %}<button class="mini" id="add-root-cat" title="新建顶层分类">＋</button>{% endif %}
+      </div>
+      <div class="tree" id="tree">
+        {% set page = '/manage' if active == 'manage' else '/' %}
+        <a class="tree-row {{ 'is-active' if active in ('nav','manage') and category_id == 'all' }}"
+           href="{{ page }}?category_id=all">
+          <span class="tree-name">全部书签</span><span class="count">{{ total }}</span>
+        </a>
+        {% macro node(n, depth) %}
+          <div class="tree-node" data-cat-id="{{ n.id }}">
+            <a class="tree-row {{ 'is-active' if category_id == n.id|string }}"
+               href="{{ page }}?category_id={{ n.id }}"
+               data-name="{{ n.name }}"
+               style="padding-left: {{ 8 + depth * 14 }}px">
+              {% if n.children %}<span class="twist" data-twist aria-hidden="true">▸</span>{% else %}<span class="twist placeholder"></span>{% endif %}
+              <span class="tree-name">{% if n.icon %}<span class="tree-ico">{{ n.icon }}</span>{% endif %}{{ n.name }}</span>
+              <span class="count">{{ n.bookmark_count }}</span>
+            </a>
+            {% if n.children %}
+              <div class="tree-children" hidden>{% for c in n.children %}{{ node(c, depth + 1) }}{% endfor %}</div>
+            {% endif %}
+          </div>
+        {% endmacro %}
+        {% for n in tree %}{{ node(n, 0) }}{% endfor %}
+        <a class="tree-row {{ 'is-active' if category_id == 'none' }}" href="{{ page }}?category_id=none">
+          <span class="tree-name">未分类</span><span class="count">{{ uncategorized }}</span>
+        </a>
+      </div>
+
+      {% if tags %}
+      <div class="tree-head"><span>标签</span></div>
+      <div class="tags">
+        {% for t in tags %}
+          <a class="tag {{ 'is-active' if tag == t.name }}"
+             data-name="{{ t.name }}"
+             href="{{ page }}?tag={{ t.name|urlencode }}">{{ t.name }}<span>{{ t.count }}</span></a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="accents" role="group" aria-label="配色">
+      <span class="accents-label">配色</span>
+      <div class="acc-row">
+        <button class="acc-dot" type="button" data-acc="indigo" aria-pressed="false"
+                title="石墨靛蓝" aria-label="配色：石墨靛蓝"></button>
+        <button class="acc-dot" type="button" data-acc="teal" aria-pressed="false"
+                title="青瓷" aria-label="配色：青瓷"></button>
+        <button class="acc-dot" type="button" data-acc="violet" aria-pressed="false"
+                title="午夜紫" aria-label="配色：午夜紫"></button>
+        <button class="acc-dot" type="button" data-acc="amber" aria-pressed="false"
+                title="暖砂琥珀" aria-label="配色：暖砂琥珀"></button>
+      </div>
+    </div>
+
+    {% if anonymous %}
+    <div class="side-foot anon-foot">
+      <p class="anon-note">这里只展示公开书签。<br>登录后可以看到全部收藏。</p>
+    </div>
+    {% else %}
+    <div class="side-foot">
+      <div class="side-user">
+        <span class="side-user-name" title="当前账号">{{ user }}</span>
+        <div class="side-acts">
+          <button class="btn sm ghost" id="btn-passwd" title="修改密码">改密</button>
+          <form method="post" action="/logout" style="margin:0">
+            <button class="btn sm ghost" type="submit" title="退出登录">退出</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </aside>
+
+  <main class="main" id="main-content" tabindex="-1">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+
+<div class="palette" id="palette" hidden>
+  <div class="palette-scrim" data-pal-close></div>
+  <div class="palette-box" role="dialog" aria-modal="true" aria-labelledby="pal-title">
+    <h2 id="pal-title" class="sr-only">命令面板</h2>
+    <input class="palette-input" id="palette-input" type="text" autocomplete="off" spellcheck="false"
+           role="combobox" aria-expanded="true" aria-autocomplete="list"
+           placeholder="搜索书签、分类、标签，或直接下命令…" aria-controls="palette-list">
+    <div class="palette-list" id="palette-list" role="listbox" aria-label="可选命令"></div>
+    <div class="palette-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
+      <span><kbd>↵</kbd> 打开</span>
+      <span><kbd>Esc</kbd> 关闭</span>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modal" hidden>
+  <div class="modal" id="modal-box" role="dialog" aria-modal="true"></div>
+</div>
+
+<script src="/static/app.js?v={{ asset_v }}"></script>
+<script src="/static/studio.js?v={{ asset_v }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

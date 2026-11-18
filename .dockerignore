@@ -1,0 +1,14 @@
+**
+!Dockerfile
+!requirements.txt
+!app/
+!app/**/
+!app/**/*.py
+!app/templates/*.html
+!app/static/*.js
+!app/static/*.css
+!app/static/favicon.svg
+!app/static/icon-180.png
+!app/static/icon-192.png
+!app/static/icon-512.png
+!app/static/manifest.webmanifest

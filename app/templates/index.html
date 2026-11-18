@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}{{ cat_name }} · {{ app_name }}{% endblock %}
+
+{% macro auth_icon(b) -%}
+  {%- if b.favicon_path -%}
+    <img src="/icons/{{ b.favicon_path }}" alt="" class="is-loading" loading="lazy" decoding="async"
+         onload="this.classList.remove('is-loading')"
+         onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'fallback',textContent:'{{ (display_title(b) or b.domain)[0]|e}}'}))">
+  {%- else -%}
+    <span class="fallback" style="background:{{ b.domain|hue }}">{{ (display_title(b) or b.domain)[0] }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<header class="page-head">
+  <div class="page-head-text">
+    <p class="eyebrow">{{ '公开书架' if anonymous else '我的书签' }}</p>
+    <h1>{{ cat_name }}</h1>
+    <p class="workspace-caption">让值得留下的网页，随时触手可及。</p>
+    <p class="page-sub">
+      {% if tag %}标签「{{ tag }}」· {% endif %}
+      {{ bookmarks|length }} 个{% if anonymous %}公开书签{% endif %}
+      {% if anonymous %}
+        · <a class="inline-link" href="/login">登录</a>后可查看全部
+      {% endif %}
+    </p>
+  </div>
+  <div class="page-head-tools">
+    <form class="search" method="get" action="/" role="search">
+      {% if category_id != 'all' %}<input type="hidden" name="category_id" value="{{ category_id }}">{% endif %}
+      {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
+      <svg class="search-ico" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <input type="search" name="q" value="{{ q }}" placeholder="搜索标题、网址、描述…" aria-label="搜索书签" autocomplete="off">
+      <button class="search-clear" type="button" aria-label="清空搜索" hidden>×</button>
+      <button class="search-submit" type="submit" aria-label="搜索全部书签" title="搜索全部书签">↵</button>
+    </form>
+    {% if not anonymous %}<button class="btn primary" id="btn-new">新增书签</button>{% endif %}
+  </div>
+</header>
+
+<section class="collection-toolbar" aria-label="书签显示选项">
+  <div class="collection-summary"><span class="collection-dot" aria-hidden="true"></span><strong>收藏索引</strong><span id="collection-count" role="status" aria-live="polite">{{ bookmarks|length }} 个书签</span></div>
+  <div class="collection-controls">
+    <label class="sr-only" for="bookmark-filter">快速筛选</label>
+    <select id="bookmark-filter"><option value="all">全部类型</option><option value="lan">内网书签</option>{% if not anonymous %}<option value="private">仅私有</option>{% endif %}<option value="warning">异常状态</option></select>
+    <label class="sr-only" for="bookmark-sort">排序方式</label>
+    <select id="bookmark-sort"><option value="default">默认排序</option><option value="title">标题 A–Z</option><option value="domain">按域名</option><option value="newest">最近添加</option></select>
+    <div class="view-switch" role="group" aria-label="显示方式">
+      <button type="button" data-view="grid" aria-label="网格视图" aria-pressed="true" title="网格视图"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="2" width="6" height="6" rx="1"/><rect x="12" y="2" width="6" height="6" rx="1"/><rect x="2" y="12" width="6" height="6" rx="1"/><rect x="12" y="12" width="6" height="6" rx="1"/></svg></button>
+      <button type="button" data-view="list" aria-label="列表视图" aria-pressed="false" title="列表视图"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M7 4h11M7 10h11M7 16h11M2 4h2M2 10h2M2 16h2"/></svg></button>
+    </div>
+  </div>
+</section>
+{% if q or tag or category_id != 'all' %}<div class="active-filters"><span>当前范围：{{ cat_name }}{% if tag %} / {{ tag }}{% endif %}{% if q %} / 搜索「{{ q }}」{% endif %}</span><a href="/">重置全部筛选 ×</a></div>{% endif %}
+{% if bookmarks %}
+<div class="grid" id="grid">
+  {% for b in bookmarks %}
+  <article class="card{{ ' is-private' if b.is_private }}{{ ' has-lan' if b.url_lan }}" data-id="{{ b.id }}"
+           data-title="{{ display_title(b) or b.domain }}" data-host="{{ b.domain }}"
+           data-description="{{ b.description or '' }}" data-tags="{{ b.tags|map(attribute='name')|join(' ') }}"
+           data-url-wan="{{ b.url }}"{% if b.url_lan %} data-url-lan="{{ b.url_lan }}"{% endif %}
+           style="--i:{{ loop.index0 }}"
+           {% if not anonymous %}draggable="true"{% endif %}>
+    <div class="card-kicker"><span>{{ b.category.name if b.category else '未分类' }}</span><span class="card-open-mark" aria-hidden="true">↗</span></div>
+    <a class="card-link" href="{{ b.url }}" target="_blank" rel="noopener"
+       data-href-wan="{{ b.url }}"{% if b.url_lan %} data-href-lan="{{ b.url_lan }}"{% endif %}>
+      <span class="favicon">{{ auth_icon(b) }}</span>
+      <span class="card-body">
+        <span class="card-title" title="{{ display_title(b) or b.domain }}">{{ display_title(b) or b.domain }}</span>
+        <span class="card-host">{{ b.domain }}</span>
+        {# 描述元素无条件渲染：没有描述时它是个空的占位块，靠 CSS 的 min-height 撑住两行，
+           同一行的卡片才不会因为"有的带描述、有的是空的"而高低不齐。 #}
+        <span class="card-desc">{{ b.description|truncate(90) if b.description else '' }}</span>
+      </span>
+    </a>
+    <div class="card-foot">
+      {% if b.url_lan %}
+        <span class="chip lan" data-lan-badge title="{{ b.url_lan }}">
+          <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M3 9h18v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9zm2-4h14v2H5V5zm9 7h-4v2h4v-2z"/></svg>
+          内网
+        </span>
+      {% endif %}
+      {% for t in b.tags %}<span class="chip">{{ t.name }}</span>{% endfor %}
+      {% if b.status_code and b.status_code >= 400 %}<span class="chip warn" title="上次探测返回 {{ b.status_code }}">{{ b.status_code }}</span>{% endif %}
+      {% if b.is_private %}
+        <span class="lock" title="私有书签，仅登录后可见">
+          <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M7 10V7a5 5 0 0 1 10 0v3h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h1zm2 0h6V7a3 3 0 0 0-6 0v3z"/></svg>
+          私有
+        </span>
+      {% endif %}
+      {% if not anonymous %}
+      <button class="icon-btn edit" data-id="{{ b.id }}" title="编辑" aria-label="编辑 {{ display_title(b) or b.domain }}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L20 8a2.83 2.83 0 0 0-4-4L4 16v4Z"/><path d="m14.6 5.4 4 4"/></svg></button>
+      <button class="icon-btn more" data-id="{{ b.id }}" title="更多操作" aria-label="更多操作"
+              aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg></button>
+      {% endif %}
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">
+  {% if q %}
+    <p class="empty-title">没有匹配「{{ q }}」的书签</p>
+    <p class="muted">换个关键词试试，或者清空搜索看全部。</p>
+    <a class="btn" href="/?{% if category_id != 'all' %}category_id={{ category_id }}&amp;{% endif %}{% if tag %}tag={{ tag|urlencode }}{% endif %}">清空搜索</a>
+  {% elif tag %}
+    <p class="empty-title">「{{ tag }}」下还没有书签</p>
+    <p class="muted">换个标签，或回到全部书签。</p>
+    <a class="btn" href="/?category_id={{ category_id }}">看全部</a>
+  {% elif category_id not in ('all', 'none') %}
+    <p class="empty-title">这个分类下还没有书签</p>
+    <p class="muted">把书签拖到左侧分类上就能归进去，也可以在编辑弹窗里选分类。</p>
+    <a class="btn" href="/?category_id=all">看全部书签</a>
+  {% elif anonymous %}
+    <p class="empty-title">这里还空着</p>
+    <p class="muted">目前没有公开书签。登录后可以查看自己的全部收藏。</p>
+    <a class="btn primary" href="/login">登录</a>
+  {% else %}
+    <p class="empty-title">这里还空着</p>
+    <p class="muted">可以点右上角新增单个书签，或到「导入」页粘贴一份域名清单批量灌进来。</p>
+    <a class="btn primary" href="/import">去导入</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
